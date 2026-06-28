@@ -1,5 +1,5 @@
 {
-  "name": "tuiengine-starter",
+  "name": "tuicraft",
   "version": "1.0.0",
   "description": "Starter template for building real-time multiplayer TUI SSH & Web games using Bun and OpenTUI.",
   "module": "src/index.ts",

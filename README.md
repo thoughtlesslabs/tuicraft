@@ -76,7 +76,7 @@ For a totally new user, there are two primary ways to download and use TuiEngine
 ### Method 1: Direct Scaffolding via GitHub (Recommended)
 You don't need to manually clone the repository. If you have **Bun** installed, you can bootstrap a fresh multiplayer game project directly using:
 ```bash
-bun create github.com/johndietrich/tui-game-engine my-tui-game
+bun create github.com/thoughtlesslabs/tuicraft my-tui-game
 ```
 This automatically downloads the template workspace, installs dependencies, and runs the required OpenTUI compatibility patches.
 
