@@ -159,7 +159,7 @@ export class AuthWizard {
 
   public updateWizardText() {
     let content: any = t``;
-    const errStr: any = this.errorMessage ? red(bold(`\nError: ${this.errorMessage}`)) : t``;
+    const errStr: any = this.errorMessage ? t`\nError: ${red(bold(this.errorMessage))}` : t``;
 
     switch (this.state) {
       case "choose-auth":
