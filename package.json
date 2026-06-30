@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "bun --hot game/index.ts",
     "create": "bun bin/cli.ts",
+    "publish": "bun bin/cli.ts publish",
     "test-boot": "bun run scripts/test-boot.ts",
     "postinstall": "bun run scripts/patch-opentui.js"
   },
