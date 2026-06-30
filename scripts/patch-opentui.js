@@ -79,3 +79,19 @@ if (fs.existsSync(filePath)) {
 } else {
   console.error('Could not find node_modules/@opentui/ssh/index.js');
 }
+
+// Ensure a default config.json exists with the correct non-conflicting default ports
+const configPath = path.resolve('config.json');
+if (!fs.existsSync(configPath)) {
+  const defaultConfig = {
+    gamePort: 10022,
+    adminPort: 10023,
+    webPort: 13000,
+    databasePath: "game.db",
+    adminFingerprints: [],
+    gameTitle: "TuiEngine",
+    gameDescription: "Multiplayer SSH Terminal Game Framework"
+  };
+  fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf8');
+  console.log('Created default config.json with non-conflicting ports (10022, 10023, 13000).');
+}

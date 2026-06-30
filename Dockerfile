@@ -15,7 +15,7 @@ COPY src/ ./src/
 COPY game/ ./game/
 
 # Expose game ports
-EXPOSE 2222 2223 3000
+EXPOSE 10022 10023 13000
 
 # Set default env variables (can be overridden by docker-compose)
 ENV CONFIG_PATH=/app/data/config.json

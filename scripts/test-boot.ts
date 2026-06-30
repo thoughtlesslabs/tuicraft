@@ -9,8 +9,8 @@ const bold = (text: string) => `\x1b[1m${text}\x1b[0m`;
 const cyan = (text: string) => `\x1b[36m${text}\x1b[0m`;
 
 const CONFIG_PATH = join(process.cwd(), "config.json");
-let gamePort = 2222;
-let webPort = 3000;
+let gamePort = 10022;
+let webPort = 13000;
 
 if (existsSync(CONFIG_PATH)) {
   try {

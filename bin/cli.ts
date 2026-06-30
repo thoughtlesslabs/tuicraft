@@ -83,6 +83,19 @@ function basename(path: string): string {
 
 try {
   copyRecursive(templateDir, targetPath);
+
+  // Write default config.json to the scaffolded project
+  const defaultConfig = {
+    gamePort: 10022,
+    adminPort: 10023,
+    webPort: 13000,
+    databasePath: "game.db",
+    adminFingerprints: [],
+    gameTitle: "TuiEngine",
+    gameDescription: "Multiplayer SSH Terminal Game Framework"
+  };
+  writeFileSync(join(targetPath, "config.json"), JSON.stringify(defaultConfig, null, 2), "utf-8");
+
   console.log(green(bold("\n🎉 Project successfully scaffolded!\n")));
   console.log("To run your TUI game dev server:");
   console.log(cyan(`  cd ${projectName}`));

@@ -9,8 +9,8 @@ TuiEngine provides a blank-slate starter kit that handles all the complex infras
 ## Key Features Out-of-the-Box
 
 1. **Dual Network Server**:
-   * **Native SSH Game Server (Port 2222)**: Playable directly from standard command-line terminals (`ssh localhost -p 2222`).
-   * **Web Client & WebSocket Bridge (Port 3000)**: Serves a premium, glassmorphic browser shell containing an `xterm.js` viewport that proxies keystrokes to the SSH server. Includes rate-limiting (max 5 connections per IP) and local storage session tokens.
+   * **Native SSH Game Server (Port 10022)**: Playable directly from standard command-line terminals (`ssh localhost -p 10022`).
+   * **Web Client & WebSocket Bridge (Port 13000)**: Serves a premium, glassmorphic browser shell containing an `xterm.js` viewport that proxies keystrokes to the SSH server. Includes rate-limiting (max 5 connections per IP) and local storage session tokens.
 2. **Authoritative Engine Loop**:
    * Centrally managed client input action queue to prevent race conditions.
    * Adjustable tick rate (default 300ms) with automated ticks.
@@ -18,7 +18,7 @@ TuiEngine provides a blank-slate starter kit that handles all the complex infras
 3. **Modular SQLite Layer (`bun:sqlite`)**:
    * Pre-packaged tables for Account Management, SSH Keys (for passwordless authentication), Bans, Admin logs, Chat histories, and resumption tokens.
    * Schema extension hook (`onDatabaseInit`) to declare your own custom tables (e.g., inventories, scores, maps).
-4. **Customizable Admin Console (Port 2223)**:
+1. **Customizable Admin Console (Port 10023)**:
    * A beautiful 3-column admin console terminal.
    * Trust On First Use (TOFU) key fingerprint security.
    * Commands to `/broadcast` server announcements, `/kick` or `/ban` players, schedule `/maintenance` restarts, and register custom administration commands.
@@ -51,7 +51,7 @@ tuiengine/
 │   │   ├── accounts.ts        # accounts, bans, and public keys manager
 │   │   └── audit.ts           # admin audits and chat logs database writer
 │   ├── network/
-│   │   ├── ssh.ts             # openTUI SSH server sockets (ports 2222 / 2223)
+│   │   ├── ssh.ts             # openTUI SSH server sockets (ports 10022 / 10023)
 │   │   ├── web.ts             # Bun HTTP server + WebSocket proxy bridge + index/guide HTML pages
 │   │   └── mcp.ts             # Model Context Protocol SSE handler and tool registration
 │   ├── engine/
@@ -105,13 +105,13 @@ bun run dev
 ```
 
 ### 3. Connect as a Player
-* **Web Browser**: Open [http://localhost:3000](http://localhost:3000).
-* **Native Terminal**: Run `ssh localhost -p 2222` (password can be anything if registering, or matches your password on login).
+* **Web Browser**: Open [http://localhost:13000](http://localhost:13000).
+* **Native Terminal**: Run `ssh localhost -p 10022` (password can be anything if registering, or matches your password on login).
 
 ### 4. Connect as an Administrator
 Open your console and run:
 ```bash
-ssh localhost -p 2223
+ssh localhost -p 10023
 ```
 *Note: The first public key that successfully connects is registered as the trusted Admin key via TOFU. Subsequent keys will be blocked.*
 
@@ -129,9 +129,9 @@ docker compose up -d --build
 This builds your TUI and Web containers, binds the ports, and starts the game loop automatically.
 
 ### 2. Connection Settings (Production Defaults)
-* **Web Client**: Open `http://your-server-ip:3000` (can be reverse-proxied using Nginx or Caddy).
+* **Web Client**: Open `http://your-server-ip:13000` (can be reverse-proxied using Nginx or Caddy).
 * **Game SSH Terminal**: Run `ssh your-server-ip` (mapped to port 22 inside the container for convenience).
-* **Admin Dashboard SSH**: Run `ssh localhost -p 2223` on the host server. (Port 2223 is bound strictly to `127.0.0.1` for security).
+* **Admin Dashboard SSH**: Run `ssh localhost -p 10023` on the host server. (Port 10023 is bound strictly to `127.0.0.1` for security).
 
 ### 3. Data Persistence
 All persistent assets—SQLite databases, log audit trails, server settings (`config.json`), and SSH host keys—are stored inside the host `./data` directory (which maps to `/app/data` inside the containers) and will persist across container updates.
