@@ -5,6 +5,7 @@ import { logAdminAction, logChatMessage } from "../db/audit";
 import { ChatInputComponent } from "./components/input";
 import { activeSessions, activeAccounts, globalAdminHistory, activeAdminSessions } from "../engine/state";
 import { banAccount, unbanAccount } from "../db/accounts";
+import { getStringVisualWidth } from "./string";
 
 // Shared state for scheduled maintenance
 export let maintenanceTimeLeft: number | null = null;
@@ -228,8 +229,7 @@ ${cyan("--- Commands Reference ---")}
     const recentLines = auditLines.slice(-maxRows);
 
     const paddedLines = recentLines.map(line => {
-      const clean = line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
-      const visibleLength = clean.length;
+      const visibleLength = getStringVisualWidth(line);
       const padAmount = Math.max(0, contentWidth - visibleLength);
       return line + " ".repeat(padAmount);
     });

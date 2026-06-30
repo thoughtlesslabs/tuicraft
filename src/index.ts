@@ -44,6 +44,7 @@ export { AuthWizard, type AuthWizardState } from "./tui/auth";
 export { TuiBillingWizard } from "./tui/components/billing";
 export { LayoutSizer } from "./tui/layout";
 export { handleAdminSession, maintenanceTimeLeft } from "./tui/admin";
+export { getCharWidth, getStringVisualWidth, padEndVisual, padStartVisual } from "./tui/string";
 
 // Master TuiEngine bootstrapper class
 import { initializeDatabase } from "./db/schema";
