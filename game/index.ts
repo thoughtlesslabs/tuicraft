@@ -207,51 +207,78 @@ function handlePlayerSession(session: any) {
     }
   }
 
-  function initLoginScreen() {
-    screenState = "auth";
-    authWizard = new AuthWizard(ctx, sessionObj.cols, sessionObj.rows, (accountId, username) => {
-      currentAccountId = accountId;
-      currentUsername = username;
-      sessionObj.accountId = accountId;
-      sessionObj.username = username;
+  function handleAuthSuccess(accountId: string, username: string) {
+    currentAccountId = accountId;
+    currentUsername = username;
+    sessionObj.accountId = accountId;
+    sessionObj.username = username;
 
-      // Expose token for web resumption
-      const token = crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
-      const db = require("../src/db/client").getDB();
-      db.query("INSERT INTO session_tokens (token, account_id, expires_at) VALUES ($t, $id, $exp)").run({
-        $t: token,
-        $id: accountId,
-        $exp: expiresAt
-      });
-      session.write(`\x1b]999;${token}\x07`);
+    // Expose token for web resumption
+    const token = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    const db = require("../src/db/client").getDB();
+    db.query("INSERT INTO session_tokens (token, account_id, expires_at) VALUES ($t, $id, $exp)").run({
+      $t: token,
+      $id: accountId,
+      $exp: expiresAt
+    });
+    session.write(`\x1b]999;${token}\x07`);
 
-      // Load player position or create
-      let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: accountId }) as { x: number, y: number } | null;
-      if (!pos) {
-        db.query("INSERT INTO game_players (account_id, x, y) VALUES ($id, 5, 3)").run({ $id: accountId });
-        pos = { x: 5, y: 3 };
-      }
+    // Load player position or create
+    let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: accountId }) as { x: number, y: number } | null;
+    if (!pos) {
+      db.query("INSERT INTO game_players (account_id, x, y) VALUES ($id, 5, 3)").run({ $id: accountId });
+      pos = { x: 5, y: 3 };
+    }
 
-      activeAccounts.set(username, {
-        accountId,
-        username,
-        x: pos.x,
-        y: pos.y
-      });
-
-      console.log(`Player @${username} authenticated.`);
-      
-      // Cleanup login widgets
-      renderer.root.getChildren().forEach((child: any) => renderer.root.remove(child));
-      authWizard = null;
-
-      // Start Game UI
-      initGameScreen();
-    }, () => {
-      session.end();
+    activeAccounts.set(username, {
+      accountId,
+      username,
+      x: pos.x,
+      y: pos.y
     });
 
+    console.log(`Player @${username} authenticated.`);
+    
+    // Cleanup login widgets
+    renderer.root.getChildren().forEach((child: any) => renderer.root.remove(child));
+    authWizard = null;
+
+    // Start Game UI
+    initGameScreen();
+  }
+
+  function initLoginScreen() {
+    // SSO Intercept: Check if connecting via central Hub credentials
+    const userStr = session.identity?.username || "";
+    if (userStr.startsWith("hub-user:") && !userStr.startsWith("hub-user:guest-")) {
+      const targetUser = userStr.substring(9);
+      setTimeout(async () => {
+        try {
+          const db = require("../src/db/client").getDB();
+          let acc = db.query("SELECT id FROM accounts WHERE username = $u").get({ $u: targetUser }) as { id: string } | null;
+          if (!acc) {
+            // Auto-register in container local DB
+            const { createAccount } = require("../src/index");
+            const newAcc = await createAccount(targetUser, crypto.randomUUID());
+            acc = { id: newAcc.id };
+          }
+          handleAuthSuccess(acc.id, targetUser);
+        } catch (err) {
+          console.error("[SSO] Auto-registration failed in game container:", err);
+          // Fall back to manual login
+          screenState = "auth";
+          authWizard = new AuthWizard(ctx, sessionObj.cols, sessionObj.rows, handleAuthSuccess, () => session.end());
+          renderer.root.add(authWizard.box);
+          authWizard.getInputField().focusInput();
+          renderer.requestRender();
+        }
+      }, 0);
+      return;
+    }
+
+    screenState = "auth";
+    authWizard = new AuthWizard(ctx, sessionObj.cols, sessionObj.rows, handleAuthSuccess, () => session.end());
     renderer.root.add(authWizard.box);
     authWizard.getInputField().focusInput();
     renderer.requestRender();
