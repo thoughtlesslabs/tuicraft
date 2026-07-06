@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { mkdirSync, existsSync, readdirSync, statSync, writeFileSync, readFileSync, unlinkSync, rmSync } from "fs";
-import { join, dirname, relative } from "path";
+import { join, dirname, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
 
@@ -274,14 +274,15 @@ async function publish() {
     console.log(yellow("⚠️ Proceeding with publish despite validation warnings...\n"));
   }
 
+  const gameDir = join(process.cwd(), "game");
+  if (!performPrePublishChecks(gameDir)) {
+    console.error(red("❌ Error: Game contains compatibility issues. Publishing aborted."));
+    process.exit(1);
+  }
+
   console.log(dim("Packing game files..."));
 
   const files: Record<string, string> = {};
-  const gameDir = join(process.cwd(), "game");
-  if (!existsSync(gameDir)) {
-    console.error(red("❌ Error: 'game' directory not found. Nothing to publish."));
-    process.exit(1);
-  }
 
   function walk(dir: string) {
     for (const child of readdirSync(dir)) {
@@ -448,6 +449,58 @@ function copyRecursiveSync(src: string, dest: string) {
   } else {
     writeFileSync(dest, readFileSync(src));
   }
+}
+
+function performPrePublishChecks(gameDir: string): boolean {
+  console.log(cyan("🔍 Running framework compatibility checks..."));
+  let passed = true;
+
+  // 1. Check entrypoint
+  const entrypoint = join(gameDir, "index.ts");
+  if (!existsSync(entrypoint)) {
+    console.error(red("❌ Error: Entrypoint 'game/index.ts' is missing. This file is required to start your game."));
+    passed = false;
+  }
+
+  // 2. Scan for incompatible patterns in game/
+  function scan(dir: string) {
+    for (const child of readdirSync(dir)) {
+      const fullPath = join(dir, child);
+      const stat = statSync(fullPath);
+      if (stat.isDirectory()) {
+        scan(fullPath);
+      } else if (stat.isFile() && (child.endsWith(".ts") || child.endsWith(".js"))) {
+        const content = readFileSync(fullPath, "utf-8");
+        const relPath = relative(process.cwd(), fullPath);
+
+        // Check for Bun global usages
+        const bunMatches = content.match(/\bBun\.[a-zA-Z0-9]+/g);
+        if (bunMatches) {
+          console.error(red(`❌ Error in ${relPath}: Usage of 'Bun' global detected (${bunMatches.join(", ")}).`));
+          console.error(yellow("    -> The production environment runs on Node.js, so Bun-specific APIs are unsupported."));
+          console.error(yellow("    -> Please use standard Node.js or cross-runtime libraries (e.g. node:crypto instead of Bun.password)."));
+          passed = false;
+        }
+
+        // Check for absolute imports
+        const absImportMatches = content.match(/(import|require)\(['"`]\/[^'"`]+['"`]\)/g);
+        if (absImportMatches) {
+          console.error(red(`❌ Error in ${relPath}: Absolute import/require path detected.`));
+          console.error(yellow("    -> All imports must use relative paths (e.g. './helper') so they resolve correctly in production."));
+          passed = false;
+        }
+      }
+    }
+  }
+
+  if (existsSync(gameDir)) {
+    scan(gameDir);
+  }
+
+  if (passed) {
+    console.log(green("✅ Compatibility validation successful!\n"));
+  }
+  return passed;
 }
 
 async function scaffold() {
