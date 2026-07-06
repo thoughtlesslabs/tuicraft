@@ -18,7 +18,7 @@ TuiEngine provides a blank-slate starter kit that handles all the complex infras
 3. **Modular SQLite Layer (`bun:sqlite`)**:
    * Pre-packaged tables for Account Management, SSH Keys (for passwordless authentication), Bans, Admin logs, Chat histories, and resumption tokens.
    * Schema extension hook (`onDatabaseInit`) to declare your own custom tables (e.g., inventories, scores, maps).
-1. **Customizable Admin Console (Port 10023)**:
+4. **Customizable Admin Console (Port 10023)**:
    * A beautiful 3-column admin console terminal.
    * Trust On First Use (TOFU) key fingerprint security.
    * Commands to `/broadcast` server announcements, `/kick` or `/ban` players, schedule `/maintenance` restarts, and register custom administration commands.
@@ -169,7 +169,7 @@ To prevent issues when running games in local development (under Bun) versus pro
 To start writing your own game, import `TuiEngine` and configure it in your entry file (e.g. `index.ts`):
 
 ```typescript
-import { TuiEngine, BoxRenderable, TextRenderable } from "tuiengine";
+import { TuiEngine, BoxRenderable, TextRenderable } from "../src/index";
 
 // 1. Declare custom SQLite tables
 function onDatabaseInit(db) {
@@ -224,3 +224,16 @@ engine.start();
 ```
 
 Enjoy building retro console multiplayer worlds! 🚀
+
+---
+
+## Production Security: Admin Keys & TOFU
+
+By default in development mode (`NODE_ENV` !== "production"), the first connection to the admin SSH console (Port 10023) registers your SSH key fingerprint via **Trust On First Use (TOFU)**.
+
+In **production mode** (`NODE_ENV` === "production"):
+- Auto-TOFU is **disabled** to prevent unauthorized takeovers of public ports.
+- You must either:
+  1. Boot with the environment variable `ALLOW_ADMIN_TOFU=true` for the first connection to setup your admin key.
+  2. Set the `ADMIN_FINGERPRINTS` environment variable to a comma-separated list of trusted SSH key fingerprints (e.g. `ADMIN_FINGERPRINTS=SHA256:abcd...,SHA256:efgh...`).
+

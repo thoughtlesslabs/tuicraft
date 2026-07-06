@@ -52,15 +52,30 @@ export async function startSshServers(
         allow: ({ fingerprint }) => {
           const cfg = loadConfig();
           
-          // Trust On First Use (TOFU) for first-time admin setup
-          if (cfg.adminFingerprints.length === 0) {
-            console.log(`[Admin Security] TOFU triggered. Registering admin fingerprint: ${fingerprint}`);
-            cfg.adminFingerprints.push(fingerprint);
-            saveConfig(cfg);
-            return true;
+          // Admin fingerprints may also be seeded out-of-band via the environment.
+          const envFingerprints = (process.env.ADMIN_FINGERPRINTS || "")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean);
+          const allowed = new Set([...cfg.adminFingerprints, ...envFingerprints]);
+
+          if (allowed.size === 0) {
+            // Auto TOFU is enabled in non-production, OR if explicitly enabled via ALLOW_ADMIN_TOFU
+            const isLocal = process.env.NODE_ENV !== "production";
+            const allowTofu = isLocal || process.env.ALLOW_ADMIN_TOFU === "true";
+
+            if (allowTofu) {
+              console.log(`[Admin Security] TOFU triggered. Registering first admin fingerprint: ${fingerprint}`);
+              cfg.adminFingerprints.push(fingerprint);
+              saveConfig(cfg);
+              return true;
+            }
+            
+            console.warn("[Admin Security] No admin fingerprints configured and ALLOW_ADMIN_TOFU is not set. Rejecting admin connection. Set ADMIN_FINGERPRINTS or ALLOW_ADMIN_TOFU=true to bootstrap.");
+            return false;
           }
 
-          const match = cfg.adminFingerprints.includes(fingerprint);
+          const match = allowed.has(fingerprint);
           if (!match) {
             console.warn(`[Admin Security] Blocked unauthorized connection from key fingerprint: ${fingerprint}`);
           }

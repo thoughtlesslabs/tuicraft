@@ -347,7 +347,7 @@ async function scaffold() {
     const stats = statSync(src);
     if (stats.isDirectory()) {
       const baseName = basename(src);
-      if (baseName === "node_modules" || baseName === ".git" || baseName === "data" || baseName === ".gemini" || baseName === "bin" || src === targetPath) {
+      if (baseName === "node_modules" || baseName === ".git" || baseName === "data" || baseName === ".gemini" || src === targetPath) {
         return;
       }
       

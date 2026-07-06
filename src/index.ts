@@ -9,7 +9,7 @@ if (typeof (globalThis as any).Bun === "undefined") {
       hash: async (password: string) => {
         return new Promise<string>((resolve, reject) => {
           const salt = crypto.randomBytes(16).toString("hex");
-          crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+          crypto.scrypt(password, salt, 64, (err: Error | null, derivedKey: Buffer) => {
             if (err) reject(err);
             resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
           });
@@ -20,7 +20,7 @@ if (typeof (globalThis as any).Bun === "undefined") {
           const [, salt, key] = hash.split(":");
           if (!salt || !key) return false;
           return new Promise<boolean>((resolve, reject) => {
-            crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+            crypto.scrypt(password, salt, 64, (err: Error | null, derivedKey: Buffer) => {
               if (err) reject(err);
               resolve(crypto.timingSafeEqual(Buffer.from(key, "hex"), derivedKey));
             });
