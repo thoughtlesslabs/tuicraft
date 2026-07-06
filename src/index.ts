@@ -39,9 +39,10 @@ if (typeof (globalThis as any).Bun === "undefined") {
   };
 }
 
-// Database Module exports
+// Database & Network Module exports
 export { setDatabasePath, getDB, getServerState, setServerState } from "./db/client";
 export { initializeDatabase } from "./db/schema";
+export { activeSshSessions } from "./network/ssh";
 export { 
   getAccountByUsername, 
   getAccountByFingerprint, 

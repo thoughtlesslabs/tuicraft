@@ -8,7 +8,9 @@ import {
   activeAccounts, 
   recentChats,
   logChatMessage,
-  loadConfig
+  loadConfig,
+  getDB,
+  createAccount
 } from "../src/index";
 import { AuthWizard } from "./auth";
 import { 
@@ -255,11 +257,10 @@ function handlePlayerSession(session: any) {
       const targetUser = userStr.substring(9);
       setTimeout(async () => {
         try {
-          const db = require("../src/db/client").getDB();
+          const db = getDB();
           let acc = db.query("SELECT id FROM accounts WHERE username = $u").get({ $u: targetUser }) as { id: string } | null;
           if (!acc) {
             // Auto-register in container local DB
-            const { createAccount } = require("../src/index");
             const newAcc = await createAccount(targetUser, crypto.randomUUID());
             acc = { id: newAcc.id };
           }
