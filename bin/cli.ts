@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { mkdirSync, existsSync, readdirSync, statSync, writeFileSync, readFileSync, unlinkSync } from "fs";
+import { mkdirSync, existsSync, readdirSync, statSync, writeFileSync, readFileSync, unlinkSync, rmSync } from "fs";
 import { join, dirname, relative } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
@@ -115,6 +115,56 @@ async function publish() {
   }
 
   const hubUrl = process.env.TUICRAFT_HUB_URL || "http://play.tuicraft.com";
+
+  // Check engine compatibility with target Hub
+  let localEngineVersion = "1.0.0";
+  try {
+    const localPkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8"));
+    localEngineVersion = localPkg.tuiengineVersion || "1.0.0";
+  } catch (e) {}
+
+  console.log(dim("Checking engine compatibility with target Hub..."));
+  let hubVersion = "1.0.0";
+  try {
+    const vRes = await fetch(`${hubUrl}/api/version`);
+    if (vRes.ok) {
+      const vData: any = await vRes.json();
+      hubVersion = vData.tuiengineVersion || "1.0.0";
+    }
+  } catch (e) {
+    console.log(yellow("⚠️  Could not retrieve Hub engine version. Proceeding with caution.\n"));
+  }
+
+  const uParts = localEngineVersion.split(".").map(Number);
+  const hParts = hubVersion.split(".").map(Number);
+  const uMajor = uParts[0] ?? 0;
+  const uMinor = uParts[1] ?? 0;
+  const uPatch = uParts[2] ?? 0;
+  const hMajor = hParts[0] ?? 0;
+  const hMinor = hParts[1] ?? 0;
+  const hPatch = hParts[2] ?? 0;
+
+  if (uMajor !== hMajor) {
+    console.error(red(`❌ Error: Incompatible engine major version!`));
+    console.error(red(`Your project requires TuiEngine v${localEngineVersion} but the target Hub runs v${hubVersion}.`));
+    console.error(red(`Please align major versions before publishing.`));
+    process.exit(1);
+  }
+
+  if (uMinor > hMinor || (uMinor === hMinor && uPatch > hPatch)) {
+    console.error(red(`❌ Error: Incompatible engine version!`));
+    console.error(red(`Your local engine (v${localEngineVersion}) is newer than the Hub version (v${hubVersion}).`));
+    console.error(red(`You cannot publish a game built on a newer engine version until the Hub is updated.`));
+    process.exit(1);
+  }
+
+  if (uMinor < hMinor || (uMinor === hMinor && uPatch < hPatch)) {
+    console.log(yellow(`⚠️  Your local engine version (v${localEngineVersion}) is older than the Hub (v${hubVersion}).`));
+    const confirmUpdate = prompt(cyan(bold(`Would you like to auto-update your local engine files to v${hubVersion} now? (Y/n): `)), "y");
+    if (confirmUpdate?.toLowerCase() === "y" || confirmUpdate === "") {
+      await autoUpdateEngineFiles(hubVersion);
+    }
+  }
 
   console.log(`Publishing: ${green(gameTitle)} (${cyan(gameSlug)})`);
   console.log(`Target Hub: ${yellow(hubUrl)}\n`);
@@ -320,6 +370,83 @@ async function publish() {
       console.error(red(`\n❌ Upload Error: ${err.message}`));
       process.exit(1);
     }
+  }
+}
+
+async function autoUpdateEngineFiles(targetVersion: string) {
+  console.log(cyan("\n🔄 Auto-updating local engine files..."));
+  const tmpZip = join(process.cwd(), "tmp_engine_update.zip");
+  const tmpDir = join(process.cwd(), "tmp_engine_update_dir");
+
+  try {
+    console.log(dim("Downloading latest engine codebase from GitHub..."));
+    const response = await fetch("https://github.com/thoughtlesslabs/tuicraft/archive/refs/heads/main.zip");
+    if (!response.ok) {
+      throw new Error(`Failed to download repository: ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    writeFileSync(tmpZip, Buffer.from(arrayBuffer));
+
+    console.log(dim("Extracting archive..."));
+    if (existsSync(tmpDir)) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+    mkdirSync(tmpDir, { recursive: true });
+
+    execSync(`unzip -o "${tmpZip}" -d "${tmpDir}"`, { stdio: "ignore" });
+
+    console.log(dim("Overwriting local src/ and bin/ directories..."));
+    const srcSource = join(tmpDir, "tuicraft-main", "src");
+    const binSource = join(tmpDir, "tuicraft-main", "bin");
+
+    if (existsSync(srcSource)) {
+      const localSrc = join(process.cwd(), "src");
+      if (existsSync(localSrc)) {
+        rmSync(localSrc, { recursive: true, force: true });
+      }
+      mkdirSync(localSrc, { recursive: true });
+      copyRecursiveSync(srcSource, localSrc);
+    }
+
+    if (existsSync(binSource)) {
+      const localBin = join(process.cwd(), "bin");
+      if (existsSync(localBin)) {
+        rmSync(localBin, { recursive: true, force: true });
+      }
+      mkdirSync(localBin, { recursive: true });
+      copyRecursiveSync(binSource, localBin);
+    }
+
+    const pkgPath = join(process.cwd(), "package.json");
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      pkg.tuiengineVersion = targetVersion;
+      writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), "utf-8");
+    }
+
+    console.log(green("🎉 Local engine files updated successfully to v" + targetVersion + "!\n"));
+  } catch (err: any) {
+    console.error(red(`❌ Auto-update failed: ${err.message}`));
+    console.log(yellow("Continuing with publishing using existing local files...\n"));
+  } finally {
+    try {
+      if (existsSync(tmpZip)) unlinkSync(tmpZip);
+      if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
+    } catch (e) {}
+  }
+}
+
+function copyRecursiveSync(src: string, dest: string) {
+  const stats = statSync(src);
+  if (stats.isDirectory()) {
+    if (!existsSync(dest)) {
+      mkdirSync(dest, { recursive: true });
+    }
+    for (const child of readdirSync(src)) {
+      copyRecursiveSync(join(src, child), join(dest, child));
+    }
+  } else {
+    writeFileSync(dest, readFileSync(src));
   }
 }
 
