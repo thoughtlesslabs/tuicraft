@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+
 import { BoxRenderable, TextRenderable, t, green, red, yellow, magenta, cyan, blue, bold, StyledText, type RenderContext } from "@opentui/core";
 import { ChatInputComponent } from "./components/input";
 import { getAccountByUsername, createAccount } from "../db/accounts";

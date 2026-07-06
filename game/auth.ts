@@ -55,6 +55,40 @@ export class AuthWizard {
     this.onAuthenticated = onAuthenticated;
     this.onExit = onExit;
 
+    // SSO Intercept: Check if connecting via central Hub credentials
+    let ssoUsername: string | null = null;
+    try {
+      const { activeSshSessions } = require("../src/network/ssh");
+      for (const sess of activeSshSessions) {
+        if (sess.renderer === (ctx as any).renderer || (sess.renderer && sess.renderer.root === (ctx as any).root)) {
+          const userStr = sess.identity?.username || "";
+          if (userStr.startsWith("hub-user:") && !userStr.startsWith("hub-user:guest-")) {
+            ssoUsername = userStr.substring(9); // Extract clean username
+          }
+          break;
+        }
+      }
+    } catch (e) {}
+
+    if (ssoUsername) {
+      const targetUser = ssoUsername;
+      this.state = "authenticated";
+      
+      // Execute login synchronously outside the main initialization frame
+      setTimeout(async () => {
+        try {
+          let acc = getAccountByUsername(targetUser);
+          if (!acc) {
+            // Auto register Hub account in container local DB
+            acc = await createAccount(targetUser, crypto.randomUUID());
+          }
+          this.onAuthenticated(acc.id, acc.username);
+        } catch (err) {
+          console.error("[SSO] Auto-registration failed in game container:", err);
+        }
+      }, 0);
+    }
+
     this.box = new BoxRenderable(ctx, {
       width: 60,
       height: 15,

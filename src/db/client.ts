@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { dirname } from "path";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 
 let db: Database | null = null;
 let databasePath = "game.db"; // Default, can be overridden by configuration
@@ -15,7 +15,7 @@ export function setDatabasePath(path: string) {
 export function getDB(): Database {
   if (!db) {
     const dir = dirname(databasePath);
-    if (dir && dir !== ".") {
+    if (dir && dir !== "." && !existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
     db = new Database(databasePath);

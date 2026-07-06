@@ -224,7 +224,7 @@ function handlePlayerSession(session: any) {
         $id: accountId,
         $exp: expiresAt
       });
-      session.write(`\x1b]99;${token}\x07`);
+      session.write(`\x1b]999;${token}\x07`);
 
       // Load player position or create
       let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: accountId }) as { x: number, y: number } | null;
@@ -243,7 +243,7 @@ function handlePlayerSession(session: any) {
       console.log(`Player @${username} authenticated.`);
       
       // Cleanup login widgets
-      renderer.root.getChildren().forEach((child: any) => renderer.root.remove(child.id));
+      renderer.root.getChildren().forEach((child: any) => renderer.root.remove(child));
       authWizard = null;
 
       // Start Game UI

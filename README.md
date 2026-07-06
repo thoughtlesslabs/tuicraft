@@ -138,6 +138,32 @@ All persistent assets—SQLite databases, log audit trails, server settings (`co
 
 ---
 
+## ⚠️ Critical Development & Deployment Rules
+
+To prevent issues when running games in local development (under Bun) versus production (under Node 26 + TSX on the Hub VPS), adhere strictly to these rules:
+
+1. **Codebase Isolation**:
+   * All custom game code, screens, databases, maps, and logic must reside strictly inside the `game/` folder.
+   * Treat `src/` as a read-only engine library. Do not create or modify files inside `src/`.
+
+2. **ESM Type-Only Imports**:
+   * Bun natively allows importing types/interfaces as regular imports. However, Node's production runner strips types strictly, causing dynamic syntax errors if a type or interface is imported without the `type` keyword.
+   * Always import interfaces/types from other files using type-only import syntax:
+     ```typescript
+     import { type MyInterface } from "./types";
+     ```
+
+3. **Autosave Handlers (No Synchronous Loop Writes)**:
+   * Never execute blocking SQL queries inside the game tick loop or on rapid key movements.
+   * Hold coordinate/state updates in-memory, and register a periodic save handler:
+     ```typescript
+     engine.loopManager.registerAutosaveHandler(async () => {
+       // Save in-memory states to DB asynchronously
+     });
+     ```
+
+---
+
 ## Developer Quickstart: Building Your Own Game
 
 To start writing your own game, import `TuiEngine` and configure it in your entry file (e.g. `index.ts`):

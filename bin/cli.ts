@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
-import { mkdirSync, existsSync, readdirSync, statSync, writeFileSync, readFileSync } from "fs";
+import { mkdirSync, existsSync, readdirSync, statSync, writeFileSync, readFileSync, unlinkSync } from "fs";
 import { join, dirname, relative } from "path";
+import { homedir } from "os";
+import { execSync } from "child_process";
 
 // ANSI Styling Helpers
 const cyan = (text: string) => `\x1b[36m${text}\x1b[0m`;
@@ -73,72 +75,153 @@ async function publish() {
     process.exit(1);
   }
 
-  const gameTitle = config.gameTitle || "Unnamed TUI Game";
-  const gameDescription = config.gameDescription || "";
+  let gameTitle = config.gameTitle || "Unnamed TUI Game";
+  let gameDescription = config.gameDescription || "";
+
+  // Catch default template names and guide the developer into renaming their game
+  if (gameTitle === "TuiEngine" || gameTitle === "Unnamed TUI Game" || !config.gameTitle) {
+    console.log(yellow("⚠️  Placeholder detected: Your game title is currently set to the default 'TuiEngine'."));
+    const renameInput = prompt(cyan(bold("Would you like to change your game's title now? (Y/n):")), "y");
+    if (renameInput?.toLowerCase() === "y" || renameInput === "") {
+      const newTitle = prompt(cyan(bold("Enter your game's title:")), "");
+      if (newTitle && newTitle.trim()) {
+        gameTitle = newTitle.trim();
+        const newDesc = prompt(cyan(bold("Enter a short description for your game (optional):")), gameDescription);
+        gameDescription = newDesc ? newDesc.trim() : "";
+
+        // Write the changes back to the local config.json file
+        config.gameTitle = gameTitle;
+        config.gameDescription = gameDescription;
+        try {
+          writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+          console.log(green("🎉 Successfully updated config.json with your new game title!\n"));
+        } catch (e: any) {
+          console.error(yellow(`⚠️  Failed to save config.json: ${e.message}`));
+        }
+      } else {
+        console.log(yellow("No title entered. Proceeding with default names.\n"));
+      }
+    }
+  }
+
   const gameSlug = gameTitle.toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-");
+  if (gameSlug === "tuiengine") {
+    console.error(red("❌ Error: You cannot publish a game with the reserved name 'TuiEngine'. Please change the gameTitle in config.json."));
+    process.exit(1);
+  }
   if (!gameSlug || gameSlug.length < 3) {
     console.error(red(`❌ Error: Invalid game title '${gameTitle}'. Title must contain alphanumeric characters.`));
     process.exit(1);
   }
 
-  const hubUrl = process.env.TUICRAFT_HUB_URL || "https://play.tuicraft.com";
+  const hubUrl = process.env.TUICRAFT_HUB_URL || "http://play.tuicraft.com";
 
   console.log(`Publishing: ${green(gameTitle)} (${cyan(gameSlug)})`);
   console.log(`Target Hub: ${yellow(hubUrl)}\n`);
 
-  const usernameInput = prompt(cyan(bold("? play.tuicraft.com Username:")), "");
-  const username = usernameInput ? usernameInput.trim() : "";
-  if (!username) {
-    console.error(red("❌ Error: Username is required."));
-    process.exit(1);
+  let token = process.env.TUICRAFT_TOKEN || process.env.TUICRAFT_PAT || "";
+  const tokenDir = join(homedir(), ".tuicraft");
+  const tokenPath = join(tokenDir, "token");
+
+  if (!token && existsSync(tokenPath)) {
+    try {
+      token = readFileSync(tokenPath, "utf-8").trim();
+    } catch (e) {}
   }
 
-  const passwordInput = prompt(cyan(bold("? play.tuicraft.com Password:")), "");
-  const password = passwordInput || "";
-  if (!password) {
-    console.error(red("❌ Error: Password is required."));
-    process.exit(1);
-  }
+  let usingCachedToken = token !== "";
 
-  console.log(dim("\nAuthenticating..."));
-  
-  let token = "";
-  try {
-    const res = await fetch(`${hubUrl}/api/publish/auth`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-
-    if (res.status === 404) {
-      const registerInput = prompt(yellow(bold(`! Account '${username}' not found. Would you like to register? (y/N):`)), "n");
-      if (registerInput?.toLowerCase() === "y") {
-        console.log(dim("Registering new account..."));
-        const regRes = await fetch(`${hubUrl}/api/publish/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
-        });
-        const regData: any = await regRes.json();
-        if (!regRes.ok) {
-          throw new Error(regData.message || "Registration failed.");
-        }
-        console.log(green("🎉 Account registered successfully!"));
-        token = regData.token;
-      } else {
-        console.log(red("\nPublishing aborted."));
-        process.exit(0);
-      }
-    } else {
-      const authData: any = await res.json();
-      if (!res.ok) {
-        throw new Error(authData.message || "Authentication failed.");
-      }
-      token = authData.token;
+  async function getNewCredentials() {
+    usingCachedToken = false;
+    const usernameInput = prompt(cyan(bold("? play.tuicraft.com Username:")), "");
+    const username = usernameInput ? usernameInput.trim() : "";
+    if (!username) {
+      console.error(red("❌ Error: Username is required."));
+      process.exit(1);
     }
-  } catch (err: any) {
-    console.error(red(`\n❌ Auth Error: ${err.message}`));
-    process.exit(1);
+
+    const passwordInput = prompt(cyan(bold("? play.tuicraft.com Password:")), "");
+    const password = passwordInput || "";
+    if (!password) {
+      console.error(red("❌ Error: Password is required."));
+      process.exit(1);
+    }
+
+    if (password.startsWith("tc_pat_")) {
+      console.log(green("🔑 Personal Access Token (PAT) detected. Using it directly for authentication."));
+      token = password;
+      return;
+    }
+
+    console.log(dim("\nAuthenticating..."));
+    
+    try {
+      const res = await fetch(`${hubUrl}/api/publish/auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+
+      if (res.status === 404) {
+        const registerInput = prompt(yellow(bold(`! Account '${username}' not found. Would you like to register? (y/N):`)), "n");
+        if (registerInput?.toLowerCase() === "y") {
+          console.log(dim("Registering new account..."));
+          const regRes = await fetch(`${hubUrl}/api/publish/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password })
+          });
+          const regData: any = await regRes.json();
+          if (!regRes.ok) {
+            throw new Error(regData.message || "Registration failed.");
+          }
+          console.log(green("🎉 Account registered successfully!"));
+          token = regData.token;
+        } else {
+          console.log(red("\nPublishing aborted."));
+          process.exit(0);
+        }
+      } else {
+        const authData: any = await res.json();
+        if (!res.ok) {
+          throw new Error(authData.message || "Authentication failed.");
+        }
+        token = authData.token;
+      }
+
+      // Save token back to config cache
+      try {
+        if (!existsSync(tokenDir)) {
+          mkdirSync(tokenDir, { recursive: true });
+        }
+        writeFileSync(tokenPath, token, "utf-8");
+      } catch (e: any) {
+        console.error(yellow(`⚠️  Failed to save token to cache: ${e.message}`));
+      }
+    } catch (err: any) {
+      console.error(red(`\n❌ Auth Error: ${err.message}`));
+      process.exit(1);
+    }
+  }
+
+  if (!token) {
+    await getNewCredentials();
+  }
+
+  console.log(cyan("🔍 Running TypeScript validation checks (tsc --noEmit)..."));
+  try {
+    execSync("bun x tsc --noEmit", { stdio: "inherit" });
+    console.log(green("✅ TypeScript validation successful!\n"));
+  } catch (err) {
+    console.error(red("\n❌ TypeScript validation failed!"));
+    console.error(yellow("Tip: If you are importing interfaces or types across files, you must use type-only imports, e.g.:"));
+    console.error(bold("     import { type MyInterface } from './types';\n"));
+    
+    const answer = prompt(yellow("Warning: This game might crash on the production server due to these errors. Proceed anyway? (y/N): "));
+    if (answer?.toLowerCase() !== 'y') {
+      process.exit(1);
+    }
+    console.log(yellow("⚠️ Proceeding with publish despite validation warnings...\n"));
   }
 
   console.log(dim("Packing game files..."));
@@ -179,34 +262,64 @@ async function publish() {
   const fileCount = Object.keys(files).length;
   console.log(dim(`Packed ${fileCount} files.`));
 
-  console.log(dim("Uploading game to Tuicraft Hub..."));
+  let screenshot = "";
+  const pngPath = join(process.cwd(), "screenshot.png");
+  const jpgPath = join(process.cwd(), "screenshot.jpg");
+  if (existsSync(pngPath)) {
+    screenshot = readFileSync(pngPath).toString("base64");
+    console.log(dim("Found screenshot.png. Packing for upload..."));
+  } else if (existsSync(jpgPath)) {
+    screenshot = readFileSync(jpgPath).toString("base64");
+    console.log(dim("Found screenshot.jpg. Packing for upload..."));
+  }
 
-  try {
-    const uploadRes = await fetch(`${hubUrl}/api/publish/upload`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({
-        gameTitle,
-        gameDescription,
-        gameSlug,
-        files
-      })
-    });
+  let uploadSuccess = false;
+  let attempts = 0;
 
-    const uploadData: any = await uploadRes.json();
-    if (!uploadRes.ok) {
-      throw new Error(uploadData.message || "Upload failed.");
+  while (!uploadSuccess && attempts < 2) {
+    attempts++;
+    console.log(dim("Uploading game to Tuicraft Hub..."));
+
+    try {
+      const uploadRes = await fetch(`${hubUrl}/api/publish/upload`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          gameTitle,
+          gameDescription,
+          gameSlug,
+          files,
+          screenshot
+        })
+      });
+
+      const uploadData: any = await uploadRes.json();
+      if (!uploadRes.ok) {
+        if (uploadRes.status === 401 && usingCachedToken) {
+          console.log(yellow("⚠️  Cached token expired or invalid. Re-authenticating..."));
+          try {
+            if (existsSync(tokenPath)) {
+              unlinkSync(tokenPath);
+            }
+          } catch (e) {}
+          await getNewCredentials();
+          continue;
+        }
+        throw new Error(uploadData.message || "Upload failed.");
+      }
+
+      const finalSlug = uploadData.slug || gameSlug;
+      console.log(green(bold("\n🎉 Game published successfully!")));
+      console.log(`Play via SSH:  ${cyan(`ssh play.tuicraft.com`)} (and select ${bold(gameTitle)})`);
+      console.log(`Play via Web:  ${cyan(`${hubUrl}/${finalSlug}`)}\n`);
+      uploadSuccess = true;
+    } catch (err: any) {
+      console.error(red(`\n❌ Upload Error: ${err.message}`));
+      process.exit(1);
     }
-
-    console.log(green(bold("\n🎉 Game published successfully!")));
-    console.log(`Play via SSH:  ${cyan(`ssh play.tuicraft.com`)} (and select ${bold(gameTitle)})`);
-    console.log(`Play via Web:  ${cyan(`${hubUrl}/${gameSlug}`)}\n`);
-  } catch (err: any) {
-    console.error(red(`\n❌ Upload Error: ${err.message}`));
-    process.exit(1);
   }
 }
 

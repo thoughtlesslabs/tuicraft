@@ -1,3 +1,44 @@
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+
+// global Bun mock for Node compat (especially password hashing)
+if (typeof (globalThis as any).Bun === "undefined") {
+  const crypto = require("node:crypto");
+  (globalThis as any).Bun = {
+    password: {
+      hash: async (password: string) => {
+        return new Promise<string>((resolve, reject) => {
+          const salt = crypto.randomBytes(16).toString("hex");
+          crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+            if (err) reject(err);
+            resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
+          });
+        });
+      },
+      verify: async (password: string, hash: string) => {
+        if (hash.startsWith("scrypt:")) {
+          const [, salt, key] = hash.split(":");
+          if (!salt || !key) return false;
+          return new Promise<boolean>((resolve, reject) => {
+            crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+              if (err) reject(err);
+              resolve(crypto.timingSafeEqual(Buffer.from(key, "hex"), derivedKey));
+            });
+          });
+        }
+        // Fallback to bcryptjs for legacy Bun/bcrypt hashes
+        try {
+          const bcrypt = require("bcryptjs");
+          return bcrypt.compareSync(password, hash);
+        } catch (e) {
+          console.error("[Auth Shim] bcryptjs missing; cannot verify bcrypt hash.");
+          return false;
+        }
+      }
+    }
+  };
+}
+
 // Database Module exports
 export { setDatabasePath, getDB, getServerState, setServerState } from "./db/client";
 export { initializeDatabase } from "./db/schema";

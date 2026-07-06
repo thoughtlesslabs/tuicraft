@@ -311,7 +311,7 @@ function getWebPageHTML(title: string, description: string): string {
     adjustScale();
     term.focus();
 
-    term.parser.registerOscHandler(99, token => {
+    term.parser.registerOscHandler(999, token => {
       if (token === "clear") {
         localStorage.removeItem("game_session_token");
       } else {
