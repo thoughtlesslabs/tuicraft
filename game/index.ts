@@ -10,7 +10,8 @@ import {
   logChatMessage,
   loadConfig,
   getDB,
-  createAccount
+  createAccount,
+  getRecentChatLogs
 } from "../src/index";
 import { AuthWizard } from "./auth";
 import { 
@@ -476,6 +477,22 @@ Type ${bold("/logout")} to exit
 
   checkLayout();
 }
+
+// Seed recentChats from the database chat logs on boot
+try {
+  const dbLogs = getRecentChatLogs(50);
+  const orderedLogs = dbLogs.reverse();
+  for (const log of orderedLogs) {
+    const d = new Date(log.created_at + "Z");
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    recentChats.push({
+      sender: log.sender_name || "Unknown",
+      text: log.message,
+      scope: "global",
+      time
+    });
+  }
+} catch (e) {}
 
 // Start Engine
 engine.start().catch(err => {

@@ -1,10 +1,8 @@
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-
 import { BoxRenderable, TextRenderable, t, green, red, yellow, magenta, cyan, blue, bold, StyledText, type RenderContext } from "@opentui/core";
 import { ChatInputComponent } from "./components/input";
 import { getAccountByUsername, createAccount } from "../db/accounts";
 import { getDB } from "../db/client";
+import { activeSshSessions } from "../network/ssh";
 
 export type AuthWizardState = 
   | "choose-auth"
@@ -42,7 +40,6 @@ export class AuthWizard {
     // SSO Intercept: Check if connecting via central Hub credentials
     let ssoUsername: string | null = null;
     try {
-      const { activeSshSessions } = require("../network/ssh");
       for (const sess of activeSshSessions) {
         if (sess.renderer?.root?.ctx === ctx || sess.renderer === (ctx as any).renderer || (sess.renderer && sess.renderer.root === (ctx as any).root)) {
           const userStr = sess.identity?.username || "";
