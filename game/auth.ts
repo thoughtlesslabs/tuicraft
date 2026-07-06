@@ -16,7 +16,8 @@ import {
 import { 
   ChatInputComponent, 
   getAccountByUsername, 
-  createAccount 
+  createAccount,
+  verifyPassword
 } from "../src/index";
 
 export type AuthWizardState = 
@@ -204,7 +205,7 @@ export class AuthWizard {
       return;
     }
 
-    const ok = acc.password_hash && await Bun.password.verify(pass, acc.password_hash);
+    const ok = acc.password_hash && await verifyPassword(pass, acc.password_hash);
     if (!ok) {
       this.errorMessage = "Incorrect password. Type /back to start over.";
       this.updateWizardText();
