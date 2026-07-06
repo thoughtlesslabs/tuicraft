@@ -255,5 +255,6 @@ export class AuthWizard {
       ...content.chunks,
       ...errStr.chunks
     ]);
+    this.ctx.requestRender();
   }
 }
