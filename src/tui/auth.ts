@@ -44,7 +44,7 @@ export class AuthWizard {
     try {
       const { activeSshSessions } = require("../network/ssh");
       for (const sess of activeSshSessions) {
-        if (sess.renderer === (ctx as any).renderer || (sess.renderer && sess.renderer.root === (ctx as any).root)) {
+        if (sess.renderer?.root?.ctx === ctx || sess.renderer === (ctx as any).renderer || (sess.renderer && sess.renderer.root === (ctx as any).root)) {
           const userStr = sess.identity?.username || "";
           if (userStr.startsWith("hub-user:") && !userStr.startsWith("hub-user:guest-")) {
             ssoUsername = userStr.substring(9); // Extract clean username
