@@ -1,5 +1,13 @@
 import { getDB } from "./client";
 
+export async function hashPassword(password: string): Promise<string> {
+  return await Bun.password.hash(password);
+}
+
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return await Bun.password.verify(password, hash);
+}
+
 export interface Account {
   id: string;
   username: string;
@@ -38,7 +46,7 @@ export function getAccountByFingerprint(fingerprint: string): Account | null {
 export async function createAccount(username: string, password?: string): Promise<Account> {
   const db = getDB();
   const id = crypto.randomUUID();
-  const passwordHash = password ? await Bun.password.hash(password) : null;
+  const passwordHash = password ? await hashPassword(password) : null;
   const createdAt = new Date().toISOString();
 
   db.query(`

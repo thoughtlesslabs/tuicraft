@@ -51,6 +51,8 @@ export {
   isAccountBanned, 
   banAccount, 
   unbanAccount,
+  hashPassword,
+  verifyPassword,
   type Account,
   type SSHKey
 } from "./db/accounts";
