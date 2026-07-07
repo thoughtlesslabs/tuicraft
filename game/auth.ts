@@ -17,7 +17,8 @@ import {
   ChatInputComponent, 
   getAccountByUsername, 
   createAccount,
-  verifyPassword
+  verifyPassword,
+  activeSshSessions
 } from "../src/index";
 
 export type AuthWizardState = 
@@ -59,7 +60,6 @@ export class AuthWizard {
     // SSO Intercept: Check if connecting via central Hub credentials
     let ssoUsername: string | null = null;
     try {
-      const { activeSshSessions } = require("../src/network/ssh");
       for (const sess of activeSshSessions) {
         if (sess.renderer === (ctx as any).renderer || (sess.renderer && sess.renderer.root === (ctx as any).root)) {
           const userStr = sess.identity?.username || "";

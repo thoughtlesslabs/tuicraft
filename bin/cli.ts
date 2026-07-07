@@ -489,6 +489,15 @@ function performPrePublishChecks(gameDir: string): boolean {
           console.error(yellow("    -> All imports must use relative paths (e.g. './helper') so they resolve correctly in production."));
           passed = false;
         }
+
+        // Check for any require() calls (game code must use standard ESM imports)
+        const requireMatches = content.match(/\brequire\s*\(/g);
+        if (requireMatches) {
+          console.error(red(`❌ Error in ${relPath}: Usage of 'require()' statement detected.`));
+          console.error(yellow("    -> Game code runs in an ECMAScript Modules (ESM) container in production."));
+          console.error(yellow("    -> Please use standard 'import' statements instead of 'require()'."));
+          passed = false;
+        }
       }
     }
   }

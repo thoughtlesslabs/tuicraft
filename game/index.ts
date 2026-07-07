@@ -53,7 +53,7 @@ function onDatabaseInit(db: any) {
 // 2. Custom Admin commands hook
 function customAdminCommands(cmd: string, arg: string, print: (msg: string) => void) {
   if (cmd === "reset-players") {
-    const db = require("../src/db/client").getDB();
+    const db = getDB();
     db.run("UPDATE game_players SET x = 5, y = 3");
     print("\x1b[32mReset all player positions to (5,3) in database.\x1b[0m");
     
@@ -94,7 +94,7 @@ engine.loopManager.registerActionHandler("move", (action) => {
     p.y = newY;
 
     // Persist position
-    const db = require("../src/db/client").getDB();
+    const db = getDB();
     db.query("UPDATE game_players SET x = $x, y = $y WHERE account_id = $id").run({
       $x: newX,
       $y: newY,
@@ -219,7 +219,7 @@ function handlePlayerSession(session: any) {
     // Expose token for web resumption
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
-    const db = require("../src/db/client").getDB();
+    const db = getDB();
     db.query("INSERT INTO session_tokens (token, account_id, expires_at) VALUES ($t, $id, $exp)").run({
       $t: token,
       $id: accountId,
@@ -356,7 +356,7 @@ function handlePlayerSession(session: any) {
         if (cmd === "logout" || cmd === "exit") {
           session.end();
         } else if (cmd === "stuck") {
-          const db = require("../src/db/client").getDB();
+          const db = getDB();
           db.query("UPDATE game_players SET x = 5, y = 3 WHERE account_id = $id").run({ $id: currentAccountId });
           const p = activeAccounts.get(currentUsername);
           if (p) { p.x = 5; p.y = 3; }
