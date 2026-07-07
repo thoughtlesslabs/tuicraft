@@ -1,5 +1,21 @@
 import { BoxRenderable, TextRenderable, type RenderContext } from "@opentui/core";
 
+function safeRemove(parent: any, child: any) {
+  if (!child) return;
+  const childId = typeof child === "string" ? child : child.id;
+  const childObj = typeof child === "string" ? parent.getChildren().find((c: any) => c.id === child) : child;
+  if (!childObj) return;
+  try {
+    parent.remove(childObj);
+  } catch (err) {
+    try {
+      parent.remove(childId);
+    } catch (err2) {
+      console.error("Failed to remove child:", childId, err, err2);
+    }
+  }
+}
+
 export class LayoutSizer {
   private minCols: number;
   private minRows: number;
@@ -20,7 +36,7 @@ export class LayoutSizer {
     if (isSmall) {
       if (!this.sizeErrorBox) {
         // Clear all elements to prevent ghost rendering
-        root.getChildren().forEach(child => root.remove(child.id));
+        root.getChildren().forEach(child => safeRemove(root, child));
 
         this.sizeErrorBox = new BoxRenderable(ctx, {
           width: "100%",
@@ -57,7 +73,7 @@ Resize your terminal now to continue.
       return false;
     } else {
       if (this.sizeErrorBox) {
-        root.remove(this.sizeErrorBox.id);
+        safeRemove(root, this.sizeErrorBox);
         this.sizeErrorBox = null;
         this.sizeErrorText = null;
       }

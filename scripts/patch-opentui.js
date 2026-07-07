@@ -194,6 +194,18 @@ if (fs.existsSync(filePath)) {
     console.log('Input freezing patch is already up to date.');
   }
 
+  // 5. Patch onConnection to disable Nagle's algorithm (setNoDelay)
+  if (!content.includes('setNoDelay(true)')) {
+    console.log('Patching @opentui/ssh/index.js to disable Nagle\'s algorithm (setNoDelay)...');
+    content = content.replace(
+      'const onConnection = (client, info) => {\n    clients.add(client);',
+      'const onConnection = (client, info) => {\n    try { client._sock?.setNoDelay?.(true); } catch (e) {}\n    clients.add(client);'
+    );
+    dirty = true;
+  } else {
+    console.log('Nagle\'s algorithm patch (setNoDelay) is already applied.');
+  }
+
   if (dirty) {
     fs.writeFileSync(filePath, content, 'utf8');
     console.log('Successfully applied all patches to @opentui/ssh/index.js!');

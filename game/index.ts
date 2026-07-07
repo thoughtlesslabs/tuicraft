@@ -131,9 +131,27 @@ engine.loopManager.registerActionHandler("chat", (action) => {
   // Save to DB log
   logChatMessage(p.accountId, p.username, text, "global", null);
 
-  // Redraw all active sessions
+  // Parse mentions to ring terminal bells for online users
+  const mentionRegex = /@([a-zA-Z0-9_]+)/g;
+  let match;
+  const mentionedNames = new Set<string>();
+  while ((match = mentionRegex.exec(text)) !== null) {
+    if (match[1]) {
+      mentionedNames.add(match[1].toLowerCase());
+    }
+  }
+
+  // Redraw all active sessions and ring bells for mentioned users
   for (const s of activeSessions.values()) {
     s.onStateUpdate?.();
+    if (s.username && mentionedNames.has(s.username.toLowerCase())) {
+      // Exclude sender
+      if (s.username.toLowerCase() !== p.username.toLowerCase()) {
+        try {
+          s.renderer.root.ctx.write("\x07");
+        } catch (e) {}
+      }
+    }
   }
 });
 
@@ -163,6 +181,12 @@ engine.loopManager.registerActionHandler("whisper", (action) => {
 
   for (const s of activeSessions.values()) {
     s.onStateUpdate?.();
+    // Ring bell for the direct recipient of the whisper
+    if (s.username && s.username.toLowerCase() === recipient.username.toLowerCase()) {
+      try {
+        s.renderer.root.ctx.write("\x07");
+      } catch (e) {}
+    }
   }
 });
 
@@ -219,8 +243,8 @@ function handlePlayerSession(session: any) {
     accountId: "",
     username: "",
     renderer,
-    cols: session.cols,
-    rows: session.rows,
+    cols: session.cols || 100,
+    rows: session.rows || 30,
     onStateUpdate: () => {
       if (screenState === "game" && currentUsername) {
         drawGameScreen();
@@ -336,8 +360,8 @@ function handlePlayerSession(session: any) {
 
   // Listeners
   const removeResize = session.onResize((cols: number, rows: number) => {
-    sessionObj.cols = cols;
-    sessionObj.rows = rows;
+    sessionObj.cols = cols || 100;
+    sessionObj.rows = rows || 30;
     checkLayout();
   });
 
@@ -563,6 +587,8 @@ function handlePlayerSession(session: any) {
       height: 3,
       borderColor: "#00FFFF"
     }, (text) => {
+      chatInputBox?.blurInput();
+      session.write("\x1b[?25l");
       if (text.startsWith("/")) {
         const parts = text.slice(1).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
@@ -777,7 +803,7 @@ function handlePlayerSession(session: any) {
 
       if (key.name === "/" && !inputFocused) {
         key.preventDefault();
-        chatInputBox?.focusInput("");
+        chatInputBox?.focusInput("/");
         return;
       }
 

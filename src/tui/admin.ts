@@ -11,6 +11,22 @@ import { getStringVisualWidth } from "./string";
 export let maintenanceTimeLeft: number | null = null;
 let maintenanceInterval: Timer | null = null;
 
+function safeRemove(parent: any, child: any) {
+  if (!child) return;
+  const childId = typeof child === "string" ? child : child.id;
+  const childObj = typeof child === "string" ? parent.getChildren().find((c: any) => c.id === child) : child;
+  if (!childObj) return;
+  try {
+    parent.remove(childObj);
+  } catch (err) {
+    try {
+      parent.remove(childId);
+    } catch (err2) {
+      console.error("Failed to remove child:", childId, err, err2);
+    }
+  }
+}
+
 export function handleAdminSession(
   session: Session<any, any>,
   customCommandCallback?: (cmd: string, args: string, print: (msg: string) => void) => void
@@ -132,7 +148,7 @@ export function handleAdminSession(
     if (isSmall) {
       if (screenState !== "size-check") {
         if (isRootAdded) {
-          renderer.root.remove(root.id);
+          safeRemove(renderer.root, root);
           isRootAdded = false;
         }
         sizeErrorBox = new BoxRenderable(ctx, {
@@ -166,7 +182,7 @@ Current Window Size  : ${cols} columns x ${rows} rows
     } else {
       if (screenState === "size-check") {
         if (sizeErrorBox) {
-          renderer.root.remove(sizeErrorBox.id);
+          safeRemove(renderer.root, sizeErrorBox);
           sizeErrorBox = null;
           sizeErrorText = null;
         }
