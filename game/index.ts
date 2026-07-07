@@ -48,9 +48,13 @@ function onDatabaseInit(db: any) {
     CREATE TABLE IF NOT EXISTS game_players (
       account_id TEXT PRIMARY KEY,
       x INTEGER NOT NULL DEFAULT 5,
-      y INTEGER NOT NULL DEFAULT 3
+      y INTEGER NOT NULL DEFAULT 3,
+      theme TEXT NOT NULL DEFAULT 'default'
     );
   `);
+  try {
+    db.run("ALTER TABLE game_players ADD COLUMN theme TEXT NOT NULL DEFAULT 'default'");
+  } catch (e) {}
 }
 
 // 2. Custom Admin commands hook
@@ -184,6 +188,7 @@ function handlePlayerSession(session: any) {
   let sizer = new LayoutSizer(80, 24); // 80x24 min footprint for retro layout
 
   let screenState: "size-check" | "auth" | "game" = "size-check";
+  let playerTheme = "default";
 
   // Login elements
   let authWizard: AuthWizard | null = null;
@@ -398,11 +403,13 @@ function handlePlayerSession(session: any) {
     session.write(`\x1b]999;${token}\x07`);
 
     // Load player position or create
-    let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: accountId }) as { x: number, y: number } | null;
+    let pos = db.query("SELECT x, y, theme FROM game_players WHERE account_id = $id").get({ $id: accountId }) as { x: number, y: number, theme?: string } | null;
     if (!pos) {
-      db.query("INSERT INTO game_players (account_id, x, y) VALUES ($id, 5, 3)").run({ $id: accountId });
-      pos = { x: 5, y: 3 };
+      db.query("INSERT INTO game_players (account_id, x, y, theme) VALUES ($id, 5, 3, 'default')").run({ $id: accountId });
+      pos = { x: 5, y: 3, theme: "default" };
     }
+
+    playerTheme = pos.theme || "default";
 
     activeAccounts.set(username, {
       accountId,
@@ -459,7 +466,7 @@ function handlePlayerSession(session: any) {
   }
 
   function applyThemeColors() {
-    const theme = getTheme("default", renderer.themeMode);
+    const theme = getTheme(playerTheme, renderer.themeMode);
     const borderCol = theme.cyan; // Dynamic accent color
     
     if (mapBox) {
@@ -481,7 +488,7 @@ function handlePlayerSession(session: any) {
       chatInputBox.borderColor = borderCol;
       chatInputBox.focusedBorderColor = borderCol;
       chatInputBox.titleColor = theme.defaultFg;
-      chatInputBox.updateColors("default", renderer.themeMode);
+      chatInputBox.updateColors(playerTheme, renderer.themeMode);
     }
     if (helpPopup && helpText) {
       helpPopup.borderColor = theme.magenta;
@@ -642,6 +649,43 @@ function handlePlayerSession(session: any) {
             });
           }
           drawGameScreen();
+        } else if (cmd === "theme") {
+          const themeChoice = parts.slice(1).join(" ").trim().toLowerCase();
+          const themeKeys = ["default", "tokyonight", "dracula", "cyberpunk", "monokai", "classic", "light"];
+          if (!themeChoice) {
+            recentChats.push({
+              sender: "System",
+              text: `🎨 Current theme: '${playerTheme}'. Available: ${themeKeys.join(", ")}. Type /theme [name] to change.`,
+              scope: "global",
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+            drawGameScreen();
+            return;
+          }
+          if (!themeKeys.includes(themeChoice)) {
+            recentChats.push({
+              sender: "System",
+              text: `❌ Unknown theme '${themeChoice}'. Available: ${themeKeys.join(", ")}`,
+              scope: "global",
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+            drawGameScreen();
+            return;
+          }
+          playerTheme = themeChoice;
+          const db = getDB();
+          db.query("UPDATE game_players SET theme = $theme WHERE account_id = $id").run({
+            $theme: themeChoice,
+            $id: currentAccountId
+          });
+          applyThemeColors();
+          recentChats.push({
+            sender: "System",
+            text: `🎨 Theme successfully changed to: ${themeChoice}`,
+            scope: "global",
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+          drawGameScreen();
         } else {
           // Send system warning
           const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -781,7 +825,7 @@ function handlePlayerSession(session: any) {
     const fb = mapFB.frameBuffer;
     fb.clear();
 
-    const theme = getTheme("default", renderer.themeMode);
+    const theme = getTheme(playerTheme, renderer.themeMode);
     const GREEN_COLOR = RGBA.fromHex(theme.green);
     const CYAN_COLOR = RGBA.fromHex(theme.cyan);
     const DIM_COLOR = RGBA.fromHex(theme.defaultFg);
@@ -802,7 +846,7 @@ function handlePlayerSession(session: any) {
     }
 
     // 2. Draw Sidebar Stats
-    const { cyan: themeCyan, magenta: themeMagenta, yellow: themeYellow } = createThemeStyles("default", renderer.themeMode);
+    const { cyan: themeCyan, magenta: themeMagenta, yellow: themeYellow } = createThemeStyles(playerTheme, renderer.themeMode);
     const statsChunks = t`
 ${themeCyan(bold("@" + currentUsername))}
 Pos: (${selfPlayer.x.toString()}, ${selfPlayer.y.toString()})
@@ -820,7 +864,7 @@ Type ${bold("/logout")} to exit
     sidebarText.content = statsChunks;
 
     // 3. Draw Chat Box logs
-    chatLogBox.updateLogs(recentChats, currentUsername, sessionObj.cols, "default", renderer.themeMode);
+    chatLogBox.updateLogs(recentChats, currentUsername, sessionObj.cols, playerTheme, renderer.themeMode);
     renderer.requestRender();
   }
 
