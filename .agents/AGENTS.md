@@ -53,3 +53,11 @@ To wow users and match high-quality games (like Gridland), always build visually
 * **Block Graphics**: Utilize Unicode block-drawing characters (`█`, `▓`, `▒`, `░`, `▄`, `▀`) to construct game boards, slider cards, progress bars, custom icons, or visual grids.
 * **Focus Micro-Animations**: Style buttons, text, and selections dynamically on hover or focus (e.g. changing border colors or prefixing selections with custom pointers like `▶`).
 
+---
+
+## 5. ESM & Cross-Runtime Compatibility (CRITICAL)
+
+* **No CommonJS `require()` in Game Code**: The production runner container executes game files inside a strict ECMAScript Modules (ESM) Node 26 environment. Never use `require()` statements inside the `game/` directory. Always use standard static ES `import` syntax.
+* **No Bun-specific Globals**: The production container runner utilizes Node 26. Do not write Bun-specific globals (like `Bun.password`, `Bun.serve`, `Bun.write`) directly in `game/` code. Use cross-runtime standard library exports like `verifyPassword` or `hashPassword` imported from `../src/index`.
+
+
