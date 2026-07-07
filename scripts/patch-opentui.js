@@ -70,9 +70,9 @@ if (fs.existsSync(filePath)) {
     console.log('Raw channel is already exposed on session.');
   }
 
-  // 4. Patch createSessionStreams to prevent input freezing
+  // 4. Patch createSessionStreams to prevent input freezing and buffer split OSC sequences
   if (content.includes('let inputPaused = false;')) {
-    console.log('Patching @opentui/ssh/index.js to fix input freezing (setRawMode mock and no-pause)...');
+    console.log('Patching @opentui/ssh/index.js to fix input freezing and buffer split OSC sequences...');
     content = content.replace(
       `  let inputPaused = false;
   const stdin = new Readable({
@@ -95,14 +95,103 @@ if (fs.existsSync(filePath)) {
   });
   stdin.setRawMode = function(mode) { return this; };
   stdin.isRaw = true;
+  let oscAccumulator = "";
+  let oscTimeout = null;
+  const onData = (chunk) => {
+    onActivity?.();
+    const str = chunk.toString("utf8");
+    if (oscAccumulator || str.includes("\\x1b]")) {
+      oscAccumulator += str;
+      const belIdx = oscAccumulator.indexOf("\\x07");
+      const stIdx = oscAccumulator.indexOf("\\x1b\\\\");
+      if (belIdx !== -1 || stIdx !== -1) {
+        const endIdx = belIdx !== -1 ? belIdx + 1 : stIdx + 2;
+        const oscSeq = oscAccumulator.substring(0, endIdx);
+        const remainder = oscAccumulator.substring(endIdx);
+        if (oscTimeout) {
+          clearTimeout(oscTimeout);
+          oscTimeout = null;
+        }
+        stdin.push(Buffer.from(oscSeq, "utf8"));
+        oscAccumulator = "";
+        if (remainder) {
+          onData(Buffer.from(remainder, "utf8"));
+        }
+      } else {
+        if (!oscTimeout) {
+          oscTimeout = setTimeout(() => {
+            if (oscAccumulator) {
+              stdin.push(Buffer.from(oscAccumulator, "utf8"));
+              oscAccumulator = "";
+            }
+            oscTimeout = null;
+          }, 100);
+        }
+      }
+    } else {
+      stdin.push(chunk);
+    }
+  };`
+    );
+    dirty = true;
+  } else if (!content.includes('oscAccumulator')) {
+    console.log('Updating input freezing patch to add OSC accumulator...');
+    content = content.replace(
+      `  const stdin = new Readable({
+    read() {}
+  });
+  stdin.setRawMode = function(mode) { return this; };
+  stdin.isRaw = true;
   const onData = (chunk) => {
     onActivity?.();
     stdin.push(chunk);
+  };`,
+      `  const stdin = new Readable({
+    read() {}
+  });
+  stdin.setRawMode = function(mode) { return this; };
+  stdin.isRaw = true;
+  let oscAccumulator = "";
+  let oscTimeout = null;
+  const onData = (chunk) => {
+    onActivity?.();
+    const str = chunk.toString("utf8");
+    if (oscAccumulator || str.includes("\\x1b]")) {
+      oscAccumulator += str;
+      const belIdx = oscAccumulator.indexOf("\\x07");
+      const stIdx = oscAccumulator.indexOf("\\x1b\\\\");
+      if (belIdx !== -1 || stIdx !== -1) {
+        const endIdx = belIdx !== -1 ? belIdx + 1 : stIdx + 2;
+        const oscSeq = oscAccumulator.substring(0, endIdx);
+        const remainder = oscAccumulator.substring(endIdx);
+        if (oscTimeout) {
+          clearTimeout(oscTimeout);
+          oscTimeout = null;
+        }
+        stdin.push(Buffer.from(oscSeq, "utf8"));
+        oscAccumulator = "";
+        if (remainder) {
+          onData(Buffer.from(remainder, "utf8"));
+        }
+      } else {
+        if (!oscTimeout) {
+          oscTimeout = setTimeout(() => {
+            if (oscAccumulator) {
+              stdin.push(Buffer.from(oscAccumulator, "utf8"));
+              oscAccumulator = "";
+            }
+            oscTimeout = null;
+          }, 100);
+        }
+      }
+    } else {
+      stdin.push(chunk);
+    }
   };`
     );
     dirty = true;
   } else {
-    console.log('Input freezing patch is already applied or source changed.');
+    console.log('Input freezing patch is already up to date.');
   }
 
   if (dirty) {

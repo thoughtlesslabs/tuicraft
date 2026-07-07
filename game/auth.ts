@@ -20,6 +20,7 @@ import {
   verifyPassword,
   activeSshSessions
 } from "../src/index";
+import { getTheme } from "../src/tui/theme";
 
 export type AuthWizardState = 
   | "choose-auth"
@@ -120,6 +121,16 @@ export class AuthWizard {
     this.updateWizardText();
   }
 
+  public updateColors(themeName: string, themeMode?: "light" | "dark" | null) {
+    const theme = getTheme(themeName, themeMode);
+    const borderCol = themeName === "light" || themeMode === "light" ? theme.blue : theme.green;
+    this.box.borderColor = borderCol;
+    this.box.focusedBorderColor = borderCol;
+    this.box.titleColor = theme.defaultFg;
+    this.textElement.fg = theme.defaultFg;
+    this.inputField.updateColors(themeName, themeMode);
+  }
+
   public getInputField(): ChatInputComponent {
     return this.inputField;
   }
@@ -131,6 +142,15 @@ export class AuthWizard {
     // Global escape/exit command
     if (clean.toLowerCase() === "/exit" || clean.toLowerCase() === "/quit") {
       this.onExit();
+      return;
+    }
+
+    // Global help popup command
+    if (clean.toLowerCase() === "/help") {
+      try {
+        (this.ctx as any).renderer.emit("show-help");
+      } catch (e) {}
+      this.updateWizardText();
       return;
     }
 

@@ -3,6 +3,7 @@ import { ChatInputComponent } from "./components/input";
 import { getAccountByUsername, createAccount } from "../db/accounts";
 import { getDB } from "../db/client";
 import { activeSshSessions } from "../network/ssh";
+import { getTheme } from "./theme";
 
 export type AuthWizardState = 
   | "choose-auth"
@@ -98,6 +99,16 @@ export class AuthWizard {
 
     this.box.add(this.inputField);
     this.updateWizardText();
+  }
+
+  public updateColors(themeName: string, themeMode?: "light" | "dark" | null) {
+    const theme = getTheme(themeName, themeMode);
+    const borderCol = themeName === "light" || themeMode === "light" ? theme.blue : theme.green;
+    this.box.borderColor = borderCol;
+    this.box.focusedBorderColor = borderCol;
+    this.box.titleColor = theme.defaultFg;
+    this.textElement.fg = theme.defaultFg;
+    this.inputField.updateColors(themeName, themeMode);
   }
 
   public getInputField(): ChatInputComponent {

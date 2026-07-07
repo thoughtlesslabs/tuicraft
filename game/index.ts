@@ -14,6 +14,7 @@ import {
   getRecentChatLogs
 } from "../src/index";
 import { AuthWizard } from "./auth";
+import { getTheme, createThemeStyles } from "../src/tui/theme";
 import { 
   BoxRenderable, 
   TextRenderable, 
@@ -25,7 +26,9 @@ import {
   yellow, 
   bold, 
   dim, 
-  StyledText 
+  StyledText,
+  FrameBufferRenderable,
+  RGBA
 } from "@opentui/core";
 
 // Define a simple 15x8 map for movement
@@ -130,9 +133,49 @@ engine.loopManager.registerActionHandler("chat", (action) => {
   }
 });
 
+engine.loopManager.registerActionHandler("whisper", (action) => {
+  const p = activeAccounts.get(action.playerId);
+  if (!p) return;
+
+  const { targetUsername, text } = action.payload;
+  const recipient = activeAccounts.get(targetUsername);
+  if (!recipient) return;
+
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  const msg = {
+    sender: p.username,
+    recipient: recipient.username,
+    text,
+    scope: "whisper" as const,
+    time
+  };
+
+  recentChats.push(msg);
+  if (recentChats.length > 50) recentChats.shift();
+
+  // Save to DB log
+  logChatMessage(p.accountId, p.username, text, `whisper:${recipient.username}`, null);
+
+  for (const s of activeSessions.values()) {
+    s.onStateUpdate?.();
+  }
+});
+
 // Handle player connection and rendering
 function handlePlayerSession(session: any) {
   const { renderer, identity } = session;
+
+  // Set dynamic FPS configurations from config
+  try {
+    const config = loadConfig() as any;
+    renderer.targetFps = config.targetFps || 60;
+    renderer.maxFps = config.maxFps || 120;
+  } catch (e) {
+    renderer.targetFps = 60;
+    renderer.maxFps = 120;
+  }
+
   const ctx = renderer.root.ctx;
   const sessionId = crypto.randomUUID();
 
@@ -148,13 +191,23 @@ function handlePlayerSession(session: any) {
   // Game UI elements
   let rootPanel: BoxRenderable | null = null;
   let mapBox: BoxRenderable | null = null;
-  let mapText: TextRenderable | null = null;
+  let mapFB: FrameBufferRenderable | null = null;
   
   let sidebarBox: BoxRenderable | null = null;
   let sidebarText: TextRenderable | null = null;
 
   let chatLogBox: ChatLogComponent | null = null;
   let chatInputBox: ChatInputComponent | null = null;
+
+  let helpPopup: BoxRenderable | null = null;
+  let helpText: TextRenderable | null = null;
+
+  let autocompleteState: {
+    prefix: string;
+    originalText: string;
+    matches: string[];
+    index: number;
+  } | null = null;
 
   const sessionObj = {
     sessionId,
@@ -173,6 +226,109 @@ function handlePlayerSession(session: any) {
 
   activeSessions.set(sessionId, sessionObj);
 
+  // Query terminal background theme mode asynchronously
+  renderer.waitForThemeMode(1000).then((mode: any) => {
+    if (screenState === "auth" && authWizard) {
+      authWizard.updateColors("default", mode);
+      authWizard.updateWizardText();
+    } else if (screenState === "game") {
+      applyThemeColors();
+      drawGameScreen();
+    }
+    renderer.requestRender();
+  }).catch(() => {});
+
+  // Initialize Help Popup Overlay
+  helpPopup = new BoxRenderable(ctx, {
+    position: "absolute",
+    width: 62,
+    height: 16,
+    top: 4,
+    left: Math.max(1, Math.floor((sessionObj.cols - 62) / 2)),
+    border: true,
+    borderColor: "#ec4899", // Magenta border
+    backgroundColor: "#0b0f19",
+    title: " Help & Guide ",
+    titleColor: "#ec4899",
+    titleAlignment: "center",
+    zIndex: 1000,
+    visible: false
+  });
+
+  helpText = new TextRenderable(ctx, {
+    width: "100%",
+    height: "100%",
+    paddingLeft: 2,
+    paddingRight: 2,
+    paddingTop: 1
+  });
+  helpPopup.add(helpText);
+
+  helpText.content = t`
+  ${dim("[Use Up/Down Arrow keys to scroll. Press any other key to close]")}
+
+  ${cyan(bold("=== TuiCraft Help & Guide ==="))}
+
+  ${yellow("Movement & Navigation:")}
+  - Use ${bold("W/A/S/D")} or ${bold("Arrow Keys")} to steer.
+
+  ${yellow("Chat Autocomplete:")}
+  - Type ${bold("@")} followed by prefix and press ${bold("Tab")} to cycle players.
+
+  ${yellow("Useful Commands:")}
+  - ${bold("/w @[player] [msg]")} : Private whisper to an online player.
+  - ${bold("/whispers")}         : View recent whisper inbox logs.
+  - ${bold("/theme [name]")}     : Change UI theme (Tokyo Night, Classic, Light...).
+  - ${bold("/stuck")}            : Reset player position to spawn.
+  - ${bold("/logout")}           : Safely disconnect from the session.
+  `;
+
+  let helpPopupCallback: ((key: any) => void) | null = null;
+
+  // Register dynamic help show emitter on the renderer
+  renderer.on("show-help", () => {
+    if (helpPopup && helpText) {
+      if (helpPopupCallback) {
+        renderer.keyInput.off("keypress", helpPopupCallback);
+        helpPopupCallback = null;
+      }
+
+      try { renderer.root.remove(helpPopup); } catch (e) {}
+      renderer.root.add(helpPopup);
+      helpPopup.visible = true;
+      helpText.scrollY = 0; // reset scroll on open
+      renderer.requestRender();
+
+      // Temporary close callback with scrolling support
+      helpPopupCallback = (key: any) => {
+        key.preventDefault();
+
+        if (key.name === "up" || key.name === "w") {
+          helpText.scrollY = Math.max(0, helpText.scrollY - 1);
+          renderer.requestRender();
+          return;
+        }
+        if (key.name === "down" || key.name === "s") {
+          helpText.scrollY = Math.min(helpText.maxScrollY, helpText.scrollY + 1);
+          renderer.requestRender();
+          return;
+        }
+
+        if (helpPopup) {
+          helpPopup.visible = false;
+          try { renderer.root.remove(helpPopup); } catch (e) {}
+        }
+        if (helpPopupCallback) {
+          renderer.keyInput.off("keypress", helpPopupCallback);
+          helpPopupCallback = null;
+        }
+        renderer.requestRender();
+      };
+
+      renderer.keyInput.on("keypress", helpPopupCallback);
+    }
+  });
+
   // Listeners
   const removeResize = session.onResize((cols: number, rows: number) => {
     sessionObj.cols = cols;
@@ -182,6 +338,10 @@ function handlePlayerSession(session: any) {
 
   const removeClose = session.onClose(() => {
     removeResize();
+    if (helpPopupCallback) {
+      renderer.keyInput.off("keypress", helpPopupCallback);
+    }
+    renderer.removeAllListeners("show-help");
     activeSessions.delete(sessionId);
     if (currentUsername) {
       activeAccounts.delete(currentUsername);
@@ -192,6 +352,12 @@ function handlePlayerSession(session: any) {
   function checkLayout() {
     const root = renderer.root;
     const ok = sizer.checkSize(ctx, root, sessionObj.cols, sessionObj.rows);
+
+    // Reposition help popup
+    if (helpPopup) {
+      helpPopup.left = Math.max(1, Math.floor((sessionObj.cols - 60) / 2));
+    }
+
     if (!ok) {
       screenState = "size-check";
       renderer.requestRender();
@@ -200,7 +366,11 @@ function handlePlayerSession(session: any) {
 
     if (screenState === "size-check") {
       // Transition out of error page
-      root.getChildren().forEach((child: any) => root.remove(child.id));
+      root.getChildren().forEach((child: any) => {
+        if (child !== helpPopup) {
+          root.remove(child);
+        }
+      });
       
       if (currentAccountId) {
         initGameScreen();
@@ -271,6 +441,7 @@ function handlePlayerSession(session: any) {
           // Fall back to manual login
           screenState = "auth";
           authWizard = new AuthWizard(ctx, sessionObj.cols, sessionObj.rows, handleAuthSuccess, () => session.end());
+          authWizard.updateColors("default", renderer.themeMode);
           renderer.root.add(authWizard.box);
           authWizard.getInputField().focusInput();
           renderer.requestRender();
@@ -281,9 +452,43 @@ function handlePlayerSession(session: any) {
 
     screenState = "auth";
     authWizard = new AuthWizard(ctx, sessionObj.cols, sessionObj.rows, handleAuthSuccess, () => session.end());
+    authWizard.updateColors("default", renderer.themeMode);
     renderer.root.add(authWizard.box);
     authWizard.getInputField().focusInput();
     renderer.requestRender();
+  }
+
+  function applyThemeColors() {
+    const theme = getTheme("default", renderer.themeMode);
+    const borderCol = theme.cyan; // Dynamic accent color
+    
+    if (mapBox) {
+      mapBox.borderColor = borderCol;
+      mapBox.focusedBorderColor = borderCol;
+      mapBox.titleColor = theme.defaultFg;
+    }
+    if (sidebarBox) {
+      sidebarBox.borderColor = borderCol;
+      sidebarBox.focusedBorderColor = borderCol;
+      sidebarBox.titleColor = theme.defaultFg;
+    }
+    if (chatLogBox) {
+      chatLogBox.borderColor = borderCol;
+      chatLogBox.focusedBorderColor = borderCol;
+      chatLogBox.titleColor = theme.defaultFg;
+    }
+    if (chatInputBox) {
+      chatInputBox.borderColor = borderCol;
+      chatInputBox.focusedBorderColor = borderCol;
+      chatInputBox.titleColor = theme.defaultFg;
+      chatInputBox.updateColors("default", renderer.themeMode);
+    }
+    if (helpPopup && helpText) {
+      helpPopup.borderColor = theme.magenta;
+      helpPopup.focusedBorderColor = theme.magenta;
+      helpPopup.titleColor = theme.defaultFg;
+      helpText.fg = theme.defaultFg;
+    }
   }
 
   function initGameScreen() {
@@ -311,13 +516,13 @@ function handlePlayerSession(session: any) {
       title: " Movement Arena "
     });
 
-    mapText = new TextRenderable(ctx, {
-      width: "100%",
-      height: "100%",
+    mapFB = new FrameBufferRenderable(ctx, {
+      width: MAP_W * 2,
+      height: MAP_H,
       paddingLeft: 2,
       paddingTop: 1
     });
-    mapBox.add(mapText);
+    mapBox.add(mapFB);
 
     sidebarBox = new BoxRenderable(ctx, {
       width: 25,
@@ -352,7 +557,8 @@ function handlePlayerSession(session: any) {
       borderColor: "#00FFFF"
     }, (text) => {
       if (text.startsWith("/")) {
-        const cmd = text.slice(1).trim();
+        const parts = text.slice(1).trim().split(/\s+/);
+        const cmd = (parts[0] || "").toLowerCase();
         if (cmd === "logout" || cmd === "exit") {
           session.end();
         } else if (cmd === "stuck") {
@@ -361,12 +567,87 @@ function handlePlayerSession(session: any) {
           const p = activeAccounts.get(currentUsername);
           if (p) { p.x = 5; p.y = 3; }
           drawGameScreen();
+        } else if (cmd === "help") {
+          renderer.emit("show-help");
+        } else if (cmd === "w" || cmd === "whisper") {
+          const rawTarget = parts[1] || "";
+          const msgText = parts.slice(2).join(" ").trim();
+          if (!rawTarget || !msgText) {
+            recentChats.push({
+              sender: "System",
+              text: "⚠️ Usage: /w @[player_name] [message]",
+              scope: "global",
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+            drawGameScreen();
+            return;
+          }
+          const cleanTarget = rawTarget.startsWith("@") ? rawTarget.slice(1) : rawTarget;
+          const targetPlayer = activeAccounts.get(cleanTarget);
+          if (!targetPlayer) {
+            recentChats.push({
+              sender: "System",
+              text: `❌ Error: Player '${cleanTarget}' is not online.`,
+              scope: "global",
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+            drawGameScreen();
+            return;
+          }
+          engine.loopManager.queueAction(currentUsername, "whisper", { targetUsername: cleanTarget, text: msgText });
+        } else if (cmd === "whispers") {
+          const db = getDB();
+          const rows = db.query(`
+            SELECT sender_name, message, scope, created_at FROM chat_log 
+            WHERE (sender_name = $user AND scope LIKE 'whisper:%')
+               OR scope = 'whisper:' || $user
+            ORDER BY id DESC LIMIT 20
+          `).all({ $user: currentUsername }) as any[];
+          
+          recentChats.push({
+            sender: "System",
+            text: "--- Recent Private Whispers ---",
+            scope: "global",
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+          
+          if (rows.length === 0) {
+            recentChats.push({
+              sender: "System",
+              text: "No recent whispers found.",
+              scope: "global",
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+          } else {
+            rows.reverse().forEach(row => {
+              const timeStr = new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              if (row.sender_name === currentUsername) {
+                const target = row.scope.split(":")[1] || "";
+                recentChats.push({
+                  sender: currentUsername,
+                  recipient: target,
+                  text: row.message,
+                  scope: "whisper",
+                  time: timeStr
+                });
+              } else {
+                recentChats.push({
+                  sender: row.sender_name,
+                  recipient: currentUsername,
+                  text: row.message,
+                  scope: "whisper",
+                  time: timeStr
+                });
+              }
+            });
+          }
+          drawGameScreen();
         } else {
           // Send system warning
           const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           recentChats.push({
             sender: "System",
-            text: `Unknown command: /${cmd}. Try /stuck or /logout.`,
+            text: `Unknown command: /${cmd}. Try /help, /stuck or /logout.`,
             scope: "global",
             time
           });
@@ -381,13 +662,74 @@ function handlePlayerSession(session: any) {
     rootPanel.add(chatLogBox);
     rootPanel.add(chatInputBox);
 
+    applyThemeColors();
+
     renderer.root.add(rootPanel);
+
+    function handleAutocomplete() {
+      if (!chatInputBox) return;
+      const inputVal = chatInputBox.inputValue;
+
+      if (!autocompleteState) {
+        const words = inputVal.split(" ");
+        const lastWord = words[words.length - 1] || "";
+        if (!lastWord || !lastWord.startsWith("@")) return;
+
+        const prefix = lastWord.slice(1);
+        const allNames = Array.from(activeAccounts.keys());
+        const prefixLower = prefix.toLowerCase();
+        const matches = allNames.filter(name => name.toLowerCase().startsWith(prefixLower));
+
+        if (matches.length === 0) return;
+
+        const originalText = words.slice(0, words.length - 1).join(" ");
+        autocompleteState = {
+          prefix,
+          originalText,
+          matches,
+          index: 0
+        };
+      } else {
+        autocompleteState.index = (autocompleteState.index + 1) % autocompleteState.matches.length;
+      }
+
+      const matchedName = autocompleteState.matches[autocompleteState.index];
+      const completedWord = `@${matchedName}`;
+      const newVal = autocompleteState.originalText
+        ? `${autocompleteState.originalText} ${completedWord} `
+        : `${completedWord} `;
+
+      chatInputBox.inputValue = newVal;
+      try {
+        const underlying = (chatInputBox as any).inputField;
+        if (underlying) {
+          underlying.cursorOffset = newVal.length;
+        }
+      } catch (e) {}
+      renderer.requestRender();
+    }
 
     // Key bindings (WASD for movement, / to focus chat, ESC to blur)
     renderer.keyInput.on("keypress", (key: any) => {
       if (screenState !== "game") return;
 
       const inputFocused = chatInputBox?.isInputFocused || false;
+
+      if (inputFocused) {
+        if (key.name === "tab") {
+          key.preventDefault();
+          handleAutocomplete();
+          return;
+        } else if (key.name !== "escape") {
+          autocompleteState = null;
+        }
+      }
+
+      if (key.name === "?" && !inputFocused) {
+        key.preventDefault();
+        renderer.emit("show-help");
+        return;
+      }
 
       if (key.name === "/" && !inputFocused) {
         key.preventDefault();
@@ -421,7 +763,7 @@ function handlePlayerSession(session: any) {
 
   function drawGameScreen() {
     const selfPlayer = activeAccounts.get(currentUsername);
-    if (!selfPlayer || !mapText || !sidebarText || !chatLogBox) return;
+    if (!selfPlayer || !mapFB || !sidebarText || !chatLogBox) return;
 
     // 1. Draw Grid Arena Map
     const grid: string[][] = [];
@@ -436,33 +778,40 @@ function handlePlayerSession(session: any) {
       }
     }
 
-    const mapChunks: any[] = [];
+    const fb = mapFB.frameBuffer;
+    fb.clear();
+
+    const theme = getTheme("default", renderer.themeMode);
+    const GREEN_COLOR = RGBA.fromHex(theme.green);
+    const CYAN_COLOR = RGBA.fromHex(theme.cyan);
+    const DIM_COLOR = RGBA.fromHex(theme.defaultFg);
+    const DEFAULT_BG = RGBA.defaultBackground();
+
     for (let y = 0; y < MAP_H; y++) {
-      const row = grid[y]!;
       for (let x = 0; x < MAP_W; x++) {
-        const char = row[x]!;
+        const char = grid[y]![x]!;
+        const xPos = x * 2;
         if (char === "@") {
-          mapChunks.push(green(bold("@ ")));
+          fb.setCell(xPos, y, "@", GREEN_COLOR, DEFAULT_BG);
         } else if (char === "P") {
-          mapChunks.push(cyan(bold("P ")));
+          fb.setCell(xPos, y, "P", CYAN_COLOR, DEFAULT_BG);
         } else {
-          mapChunks.push(dim(". "));
+          fb.setCell(xPos, y, ".", DIM_COLOR, DEFAULT_BG);
         }
       }
-      mapChunks.push({ __isChunk: true, text: "\n" });
     }
-    mapText.content = new StyledText(mapChunks);
 
     // 2. Draw Sidebar Stats
+    const { cyan: themeCyan, magenta: themeMagenta, yellow: themeYellow } = createThemeStyles("default", renderer.themeMode);
     const statsChunks = t`
-${cyan(bold("@" + currentUsername))}
+${themeCyan(bold("@" + currentUsername))}
 Pos: (${selfPlayer.x.toString()}, ${selfPlayer.y.toString()})
 
-${magenta("Online Realm:")}
+${themeMagenta("Online Realm:")}
 Total sessions: ${activeSessions.size.toString()}
 Active players : ${activeAccounts.size.toString()}
 
-${yellow("Movement Tips:")}
+${themeYellow("Movement Tips:")}
 Use ${bold("W/A/S/D")} to move
 Press ${bold("/")} to chat
 Press ${bold("ESC")} to steer

@@ -135,21 +135,28 @@ export class ChatLogComponent extends BoxRenderable {
     this.textRenderable.fg = theme.defaultFg;
     const { cyan, blue, magenta, green, red, yellow } = createThemeStyles(themeName, themeMode);
 
+    const filteredChats = chats.filter(c => {
+      if (c.scope === "whisper") {
+        return c.sender === playerName || c.recipient === playerName;
+      }
+      return true;
+    });
+
     const chatChunks: TextChunk[] = [];
     const colWidth = Math.max(20, Math.floor(cols / 2) - 4);
     const visibleLines = Math.max(3, (typeof this.height === "number" ? this.height : 15) - 4);
 
-    const maxScroll = Math.max(0, chats.length - 1);
+    const maxScroll = Math.max(0, filteredChats.length - 1);
     if (this.scrollOffset > maxScroll) {
       this.scrollOffset = maxScroll;
     }
 
-    const end = Math.max(0, chats.length - this.scrollOffset);
+    const end = Math.max(0, filteredChats.length - this.scrollOffset);
     let start = end;
     let lineCount = 0;
 
     for (let i = end - 1; i >= 0; i--) {
-      const c = chats[i]!;
+      const c = filteredChats[i]!;
       const tagLen = c.scope === "whisper" ? (c.sender === playerName ? 10 + (c.recipient?.length || 0) : 12 + c.sender.length) : 8 + c.sender.length + 2;
       const msgLen = 10 + tagLen + c.text.length;
       const lines = Math.ceil(msgLen / colWidth);
@@ -190,7 +197,7 @@ export class ChatLogComponent extends BoxRenderable {
       return chunks;
     };
 
-    chats.slice(start, end).forEach(c => {
+    filteredChats.slice(start, end).forEach(c => {
       if (c.scope === "whisper") {
         if (c.sender === playerName) {
           chatChunks.push(...t`[${c.time}] ${magenta(bold("To " + c.recipient))}: `.chunks);

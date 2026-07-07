@@ -114,7 +114,7 @@ async function publish() {
     process.exit(1);
   }
 
-  const hubUrl = process.env.TUICRAFT_HUB_URL || "http://play.tuicraft.com";
+  const hubUrl = process.env.TUICRAFT_HUB_URL || "https://play.tuicraft.com";
 
   // Check engine compatibility with target Hub
   let localEngineVersion = "1.0.0";
