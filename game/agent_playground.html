@@ -272,6 +272,12 @@ Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
     document.getElementById("agent-token").value = localStorage.getItem("agent_token") || "";
     document.getElementById("gemini-key").value = localStorage.getItem("gemini_api_key") || "";
 
+    // Calculate path prefix dynamically from window.location.pathname
+    const pathParts = window.location.pathname.split('/');
+    const hasPrefix = pathParts.length > 2 && pathParts[pathParts.length - 1] === 'agent-playground';
+    const prefix = hasPrefix ? '/' + pathParts.slice(1, pathParts.length - 1).join('/') : '';
+    console.log("Using TuiCraft API Path Prefix:", prefix);
+
     let ws = null;
     let agentInterval = null;
     let isAgentRunning = false;
@@ -289,7 +295,7 @@ Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
     // Connect visual game terminal
     function connectTerminal() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = protocol + '//' + window.location.host + '/ws';
+      const wsUrl = protocol + '//' + window.location.host + prefix + '/ws';
       ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
@@ -342,7 +348,7 @@ Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
 
       // 1. Fetch MCP details via local HTTP fetch
       try {
-        const gameResponse = await fetch('/api/mcp/authenticate', {
+        const gameResponse = await fetch(prefix + '/api/mcp/authenticate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: agentToken })
@@ -370,7 +376,7 @@ Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
       agentInterval = setInterval(async () => {
         try {
           // Fetch game state
-          const stateRes = await fetch(`/api/mcp/state?sessionId=${mcpSessionId}`);
+          const stateRes = await fetch(prefix + `/api/mcp/state?sessionId=${mcpSessionId}`);
           if (!stateRes.ok) throw new Error("Could not fetch game state.");
           const gameState = await stateRes.json();
 
@@ -411,7 +417,7 @@ Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
 
           if (actionType) {
             // Push action back to TuiCraft
-            const actRes = await fetch('/api/mcp/action', {
+            const actRes = await fetch(prefix + '/api/mcp/action', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

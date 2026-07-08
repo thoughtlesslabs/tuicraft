@@ -112,6 +112,217 @@ function customAdminCommands(cmd: string, arg: string, print: (msg: string) => v
 const playerScores = new Map<string, number>();
 const activeAgentSessions = new Map<string, { accountId: string; username: string; lastActionTime: number }>();
 
+// Define custom routes mapped in a proxy wrapper to support reverse proxy path prefixes dynamically
+const customRoutesObject = {
+  "/agent-playground": (req: Request) => {
+    const htmlPath = join(process.cwd(), "game", "agent_playground.html");
+    try {
+      const html = readFileSync(htmlPath, "utf-8");
+      return new Response(html, { headers: { "Content-Type": "text/html" } });
+    } catch (err) {
+      return new Response("Agent Playground file not found.", { status: 404 });
+    }
+  },
+  "/api/mcp/authenticate": async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    try {
+      const body = (await req.json()) as any;
+      const token = body.token;
+      const db = getDB();
+      let tokenRow = db.query(
+        "SELECT t.account_id, a.username FROM agent_tokens t JOIN accounts a ON t.account_id = a.id WHERE t.token = $token"
+      ).get({ $token: token }) as { account_id: string; username: string } | null;
+
+      const HUB_API_URL = process.env.HUB_API_URL || "https://play.tuicraft.com";
+
+      // Verification fallback with central Hub
+      if (!tokenRow) {
+        try {
+          const verifyRes = await fetch(`${HUB_API_URL}/api/publish/tokens/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token })
+          });
+          if (verifyRes.ok) {
+            const verifyData = await verifyRes.json() as { accountId: string; username: string };
+            if (verifyData && verifyData.accountId) {
+              const accountId = verifyData.accountId;
+              const username = verifyData.username;
+              
+              // Ensure account exists locally
+              const localAcc = db.query("SELECT id FROM accounts WHERE id = $id").get({ $id: accountId });
+              if (!localAcc) {
+                db.query("INSERT INTO accounts (id, username, created_at) VALUES ($id, $u, $time)").run({
+                  $id: accountId,
+                  $u: username,
+                  $time: new Date().toISOString()
+                });
+              }
+              
+              // Save locally
+              db.query("INSERT OR REPLACE INTO agent_tokens (token, account_id, created_at) VALUES ($t, $id, $time)").run({
+                $t: token,
+                $id: accountId,
+                $time: new Date().toISOString()
+              });
+              
+              tokenRow = { account_id: accountId, username };
+            }
+          }
+        } catch (e) {
+          console.error("[Index Auth Hub Verify Error]", e);
+        }
+      }
+
+      if (!tokenRow) {
+        return new Response(JSON.stringify({ success: false, error: "Invalid agent token" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      const sessionId = crypto.randomUUID();
+      activeAgentSessions.set(sessionId, {
+        accountId: tokenRow.account_id,
+        username: tokenRow.username,
+        lastActionTime: Date.now()
+      });
+
+      // Make agent active in arena
+      if (!activeAccounts.has(tokenRow.username)) {
+        let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: tokenRow.account_id }) as { x: number; y: number } | null;
+        if (!pos) {
+          db.query("INSERT INTO game_players (account_id, x, y, theme) VALUES ($id, 5, 3, 'default')").run({ $id: tokenRow.account_id });
+          pos = { x: 5, y: 3 };
+        }
+        activeAccounts.set(tokenRow.username, {
+          accountId: tokenRow.account_id,
+          username: tokenRow.username,
+          x: pos.x,
+          y: pos.y,
+          isAgent: true
+        });
+        // Trigger redraws for visual players
+        for (const s of activeSessions.values()) {
+          s.onStateUpdate?.();
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true, sessionId, username: tokenRow.username }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  },
+  "/api/mcp/state": async (req: Request) => {
+    const url = new URL(req.url);
+    const sessionId = url.searchParams.get("sessionId");
+    if (!sessionId || !activeAgentSessions.has(sessionId)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const session = activeAgentSessions.get(sessionId)!;
+    session.lastActionTime = Date.now(); // update activity heartbeat
+
+    const players = Array.from(activeAccounts.values()).map((p: any) => ({
+      username: p.username,
+      x: p.x,
+      y: p.y,
+      is_agent: !!p.isAgent
+    }));
+
+    const humanLeaderboard = getLocalLeaderboard("arena", "ticks_survived", false, 5);
+    const agentLeaderboard = getLocalLeaderboard("arena", "ticks_survived", true, 5);
+
+    return new Response(JSON.stringify({
+      gameTitle: "TuiCraft Movement Arena",
+      arenaWidth: MAP_W,
+      arenaHeight: MAP_H,
+      myPosition: activeAccounts.get(session.username) || null,
+      activePlayers: players,
+      recentChats: recentChats.slice(-15),
+      leaderboards: {
+        humans: humanLeaderboard,
+        agents: agentLeaderboard
+      }
+    }), {
+      headers: { "Content-Type": "application/json" }
+    });
+  },
+  "/api/mcp/action": async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    try {
+      const body = (await req.json()) as any;
+      const sessionId = body.sessionId;
+      const actionType = body.actionType;
+      const payload = body.payload;
+
+      if (!sessionId || !activeAgentSessions.has(sessionId)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const session = activeAgentSessions.get(sessionId)!;
+      const now = Date.now();
+      if (now - session.lastActionTime < 180) {
+        return new Response(JSON.stringify({ success: false, error: "Rate limit exceeded" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      session.lastActionTime = now;
+
+      // Enqueue action
+      engine.loopManager.queueAction(session.accountId, actionType, payload);
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  },
+  "/api/leaderboards": async (req: Request) => {
+    const url = new URL(req.url);
+    const gameId = url.searchParams.get("game_id") || "arena";
+    const metric = url.searchParams.get("metric") || "ticks_survived";
+    const isAgent = url.searchParams.get("is_agent") === "true";
+    const limit = Number(url.searchParams.get("limit") || "5");
+
+    const rankings = getLocalLeaderboard(gameId, metric, isAgent, limit);
+    return new Response(JSON.stringify(rankings), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+};
+
+const customRoutesProxy = new Proxy(customRoutesObject, {
+  get(target: any, prop: string) {
+    if (typeof prop !== "string") return undefined;
+    for (const key of Object.keys(target)) {
+      if (prop === key || prop.endsWith(key)) {
+        return target[key];
+      }
+    }
+    return undefined;
+  },
+  has(target: any, prop: string) {
+    if (typeof prop !== "string") return false;
+    for (const key of Object.keys(target)) {
+      if (prop === key || prop.endsWith(key)) {
+        return true;
+      }
+    }
+    return false;
+  }
+});
+
 // Start master TuiEngine
 const engine = new TuiEngine({
   databasePath: "data/demo.db",
@@ -119,194 +330,7 @@ const engine = new TuiEngine({
   customAdminCommands,
   tickRateMs: 200, // Fast ticks for smooth movement!
   onPlayerSession: handlePlayerSession,
-  customRoutes: {
-    "/agent-playground": (req) => {
-      const htmlPath = join(process.cwd(), "game", "agent_playground.html");
-      try {
-        const html = readFileSync(htmlPath, "utf-8");
-        return new Response(html, { headers: { "Content-Type": "text/html" } });
-      } catch (err) {
-        return new Response("Agent Playground file not found.", { status: 404 });
-      }
-    },
-    "/api/mcp/authenticate": async (req) => {
-      if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
-      try {
-        const body = (await req.json()) as any;
-        const token = body.token;
-        const db = getDB();
-        let tokenRow = db.query(
-          "SELECT t.account_id, a.username FROM agent_tokens t JOIN accounts a ON t.account_id = a.id WHERE t.token = $token"
-        ).get({ $token: token }) as { account_id: string; username: string } | null;
-
-        const HUB_API_URL = process.env.HUB_API_URL || "https://play.tuicraft.com";
-
-        // Verification fallback with central Hub
-        if (!tokenRow) {
-          try {
-            const verifyRes = await fetch(`${HUB_API_URL}/api/publish/tokens/verify`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ token })
-            });
-            if (verifyRes.ok) {
-              const verifyData = await verifyRes.json() as { accountId: string; username: string };
-              if (verifyData && verifyData.accountId) {
-                const accountId = verifyData.accountId;
-                const username = verifyData.username;
-                
-                // Ensure account exists locally
-                const localAcc = db.query("SELECT id FROM accounts WHERE id = $id").get({ $id: accountId });
-                if (!localAcc) {
-                  db.query("INSERT INTO accounts (id, username, created_at) VALUES ($id, $u, $time)").run({
-                    $id: accountId,
-                    $u: username,
-                    $time: new Date().toISOString()
-                  });
-                }
-                
-                // Save locally
-                db.query("INSERT OR REPLACE INTO agent_tokens (token, account_id, created_at) VALUES ($t, $id, $time)").run({
-                  $t: token,
-                  $id: accountId,
-                  $time: new Date().toISOString()
-                });
-                
-                tokenRow = { account_id: accountId, username };
-              }
-            }
-          } catch (e) {
-            console.error("[Index Auth Hub Verify Error]", e);
-          }
-        }
-
-        if (!tokenRow) {
-          return new Response(JSON.stringify({ success: false, error: "Invalid agent token" }), {
-            status: 401,
-            headers: { "Content-Type": "application/json" }
-          });
-        }
-
-        const sessionId = crypto.randomUUID();
-        activeAgentSessions.set(sessionId, {
-          accountId: tokenRow.account_id,
-          username: tokenRow.username,
-          lastActionTime: Date.now()
-        });
-
-        // Make agent active in arena
-        if (!activeAccounts.has(tokenRow.username)) {
-          let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: tokenRow.account_id }) as { x: number; y: number } | null;
-          if (!pos) {
-            db.query("INSERT INTO game_players (account_id, x, y, theme) VALUES ($id, 5, 3, 'default')").run({ $id: tokenRow.account_id });
-            pos = { x: 5, y: 3 };
-          }
-          activeAccounts.set(tokenRow.username, {
-            accountId: tokenRow.account_id,
-            username: tokenRow.username,
-            x: pos.x,
-            y: pos.y,
-            isAgent: true
-          });
-          // Trigger redraws for visual players
-          for (const s of activeSessions.values()) {
-            s.onStateUpdate?.();
-          }
-        }
-
-        return new Response(JSON.stringify({ success: true, sessionId, username: tokenRow.username }), {
-          headers: { "Content-Type": "application/json" }
-        });
-      } catch (err: any) {
-        return new Response(JSON.stringify({ success: false, error: err.message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" }
-        });
-      }
-    },
-    "/api/mcp/state": async (req) => {
-      const url = new URL(req.url);
-      const sessionId = url.searchParams.get("sessionId");
-      if (!sessionId || !activeAgentSessions.has(sessionId)) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-
-      const session = activeAgentSessions.get(sessionId)!;
-      const db = getDB();
-
-      const players = Array.from(activeAccounts.values()).map((p: any) => ({
-        username: p.username,
-        x: p.x,
-        y: p.y,
-        is_agent: !!p.isAgent
-      }));
-
-      const humanLeaderboard = getLocalLeaderboard("arena", "ticks_survived", false, 5);
-      const agentLeaderboard = getLocalLeaderboard("arena", "ticks_survived", true, 5);
-
-      return new Response(JSON.stringify({
-        gameTitle: "TuiCraft Movement Arena",
-        arenaWidth: MAP_W,
-        arenaHeight: MAP_H,
-        myPosition: activeAccounts.get(session.username) || null,
-        activePlayers: players,
-        recentChats: recentChats.slice(-15),
-        leaderboards: {
-          humans: humanLeaderboard,
-          agents: agentLeaderboard
-        }
-      }), {
-        headers: { "Content-Type": "application/json" }
-      });
-    },
-    "/api/mcp/action": async (req) => {
-      if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
-      try {
-        const body = (await req.json()) as any;
-        const sessionId = body.sessionId;
-        const actionType = body.actionType;
-        const payload = body.payload;
-
-        if (!sessionId || !activeAgentSessions.has(sessionId)) {
-          return new Response("Unauthorized", { status: 401 });
-        }
-
-        const session = activeAgentSessions.get(sessionId)!;
-        const now = Date.now();
-        if (now - session.lastActionTime < 180) {
-          return new Response(JSON.stringify({ success: false, error: "Rate limit exceeded" }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" }
-          });
-        }
-        session.lastActionTime = now;
-
-        // Enqueue action
-        engine.loopManager.queueAction(session.accountId, actionType, payload);
-
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { "Content-Type": "application/json" }
-        });
-      } catch (err: any) {
-        return new Response(JSON.stringify({ success: false, error: err.message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" }
-        });
-      }
-    },
-    "/api/leaderboards": async (req) => {
-      const url = new URL(req.url);
-      const gameId = url.searchParams.get("game_id") || "arena";
-      const metric = url.searchParams.get("metric") || "ticks_survived";
-      const isAgent = url.searchParams.get("is_agent") === "true";
-      const limit = Number(url.searchParams.get("limit") || "5");
-
-      const rankings = getLocalLeaderboard(gameId, metric, isAgent, limit);
-      return new Response(JSON.stringify(rankings), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  }
+  customRoutes: customRoutesProxy
 });
 
 // Register MCP game tools
