@@ -499,6 +499,8 @@ function handlePlayerSession(session: any) {
   let leaderboardText: TextRenderable | null = null;
   let leaderboardPopupCallback: ((key: any) => void) | null = null;
   let isGlobalView = false;
+  let helpPopupActive = false;
+  let leaderboardPopupActive = false;
 
   let autocompleteState: {
     prefix: string;
@@ -586,6 +588,7 @@ function handlePlayerSession(session: any) {
   // Register dynamic help show emitter on the renderer
   renderer.on("show-help", () => {
     if (helpPopup && helpText) {
+      helpPopupActive = true;
       if (helpPopupCallback) {
         renderer.keyInput.off("keypress", helpPopupCallback);
         helpPopupCallback = null;
@@ -612,6 +615,7 @@ function handlePlayerSession(session: any) {
           return;
         }
 
+        helpPopupActive = false;
         if (helpPopup) {
           helpPopup.visible = false;
           try { renderer.root.remove(helpPopup); } catch (e) {}
@@ -685,6 +689,7 @@ function handlePlayerSession(session: any) {
   // Register leaderboard show listener
   renderer.on("show-leaderboard", () => {
     if (leaderboardPopup && leaderboardText) {
+      leaderboardPopupActive = true;
       if (leaderboardPopupCallback) {
         renderer.keyInput.off("keypress", leaderboardPopupCallback);
         leaderboardPopupCallback = null;
@@ -772,6 +777,7 @@ function handlePlayerSession(session: any) {
           return;
         }
 
+        leaderboardPopupActive = false;
         if (leaderboardPopup) {
           leaderboardPopup.visible = false;
           try { renderer.root.remove(leaderboardPopup); } catch (e) {}
@@ -1195,7 +1201,7 @@ function handlePlayerSession(session: any) {
 
     // Key bindings (WASD for movement, / to focus chat, ESC to blur)
     renderer.keyInput.on("keypress", (key: any) => {
-      if (screenState !== "game") return;
+      if (screenState !== "game" || helpPopupActive || leaderboardPopupActive) return;
 
       const inputFocused = chatInputBox?.isInputFocused || false;
 
