@@ -506,6 +506,31 @@ function performPrePublishChecks(gameDir: string): boolean {
     scan(gameDir);
   }
 
+  // 3. Check package.json dependencies for framework duplicates
+  const pkgPath = join(process.cwd(), "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      const FRAMEWORK_DEPS = new Set([
+        "@opentui/core",
+        "@opentui/ssh",
+        "@modelcontextprotocol/sdk",
+        "qrcode",
+        "ssh2",
+        "typescript",
+        "tsx",
+        "bcryptjs"
+      ]);
+      const duplicates = Object.keys(pkg.dependencies || {}).filter(dep => FRAMEWORK_DEPS.has(dep));
+      if (duplicates.length > 0) {
+        console.error(red(`❌ Error in package.json: Found core framework dependencies under 'dependencies' (${duplicates.join(", ")}).`));
+        console.error(yellow("    -> These should be placed under 'devDependencies' to prevent class-duplication crashes in production."));
+        console.error(yellow("    -> Run 'npm install --save-dev <packages>' or move them manually in package.json."));
+        passed = false;
+      }
+    } catch (e) {}
+  }
+
   if (passed) {
     console.log(green("✅ Compatibility validation successful!\n"));
   }
