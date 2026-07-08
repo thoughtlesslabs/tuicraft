@@ -11,7 +11,8 @@ import {
   loadConfig,
   getDB,
   createAccount,
-  getRecentChatLogs
+  getRecentChatLogs,
+  getStringVisualWidth
 } from "../src/index";
 import { AuthWizard } from "./auth";
 import { readFileSync } from "node:fs";
@@ -131,7 +132,7 @@ const engine = new TuiEngine({
     "/api/mcp/authenticate": async (req) => {
       if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
       try {
-        const body = await req.json();
+        const body = (await req.json()) as any;
         const token = body.token;
         const db = getDB();
         let tokenRow = db.query(
@@ -261,7 +262,7 @@ const engine = new TuiEngine({
     "/api/mcp/action": async (req) => {
       if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
       try {
-        const body = await req.json();
+        const body = (await req.json()) as any;
         const sessionId = body.sessionId;
         const actionType = body.actionType;
         const payload = body.payload;
@@ -493,8 +494,8 @@ function handlePlayerSession(session: any) {
   let chatLogBox: ColoredChatLogComponent | null = null;
   let chatInputBox: ChatInputComponent | null = null;
 
-  let helpPopup = null;
-  let helpText = null;
+  let helpPopup: any = null;
+  let helpText: any = null;
 
   let leaderboardPopup: BoxRenderable | null = null;
   let leaderboardText: TextRenderable | null = null;

@@ -1,5 +1,5 @@
-import { 
-  BoxOptions,
+import {
+  type BoxOptions,
   BoxRenderable, 
   TextRenderable, 
   t, 

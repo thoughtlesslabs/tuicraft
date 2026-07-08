@@ -245,14 +245,11 @@ A social deduction chat simulation.
     })
   );
 
-  // 5. Register Prompt: Initialize Agent Play Style
   server.prompt(
     "agent-strategy",
+    "Initialize strategy parameters for playing TuiCraft games.",
     {
-      description: "Initialize strategy parameters for playing TuiCraft games.",
-      args: {
-        gameMode: z.string().describe("The game mode, e.g. 'arena'")
-      }
+      gameMode: z.string().describe("The game mode, e.g. 'arena'")
     },
     async (args) => {
       const mode = args.gameMode || "arena";
