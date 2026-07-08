@@ -162,6 +162,9 @@ To prevent issues when running games in local development (under Bun) versus pro
      });
      ```
 
+4. **Graceful Hot-Reloading & SIGTERM Support**:
+   * When container hot-restarts occur (e.g. for game updates), the runner container receives a `SIGTERM` signal. TuiEngine automatically catches this signal to flush all registered autosave handlers and persist active in-memory coordinates/scores to SQLite, ensuring player progress is never lost during deploys.
+
 ---
 
 ## Developer Quickstart: Building Your Own Game
