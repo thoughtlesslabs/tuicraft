@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { recordScore, getLocalLeaderboard, getGlobalLeaderboard } from "./leaderboard_helpers";
 import { registerMcpTools } from "./mcp_helpers";
+import { ColoredChatLogComponent } from "./colored_log";
 import { getTheme, createThemeStyles } from "../src/tui/theme";
 import { 
   BoxRenderable, 
@@ -489,7 +490,7 @@ function handlePlayerSession(session: any) {
   let sidebarBox: BoxRenderable | null = null;
   let sidebarText: TextRenderable | null = null;
 
-  let chatLogBox: ChatLogComponent | null = null;
+  let chatLogBox: ColoredChatLogComponent | null = null;
   let chatInputBox: ChatInputComponent | null = null;
 
   let helpPopup = null;
@@ -993,7 +994,7 @@ function handlePlayerSession(session: any) {
     midRow.add(sidebarBox);
 
     // 3. Chat Log
-    chatLogBox = new ChatLogComponent(ctx, {
+    chatLogBox = new ColoredChatLogComponent(ctx, {
       width: "100%",
       height: 9,
       borderColor: "#00FFFF"
