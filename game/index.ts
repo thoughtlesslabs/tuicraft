@@ -14,6 +14,10 @@ import {
   getRecentChatLogs
 } from "../src/index";
 import { AuthWizard } from "./auth";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { recordScore, getLocalLeaderboard, getGlobalLeaderboard } from "./leaderboard_helpers";
+import { registerMcpTools } from "./mcp_helpers";
 import { getTheme, createThemeStyles } from "../src/tui/theme";
 import { 
   BoxRenderable, 
@@ -55,6 +59,31 @@ function onDatabaseInit(db: any) {
   try {
     db.run("ALTER TABLE game_players ADD COLUMN theme TEXT NOT NULL DEFAULT 'default'");
   } catch (e) {}
+
+  // Leaderboards table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS leaderboards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      game_id TEXT NOT NULL,
+      metric TEXT NOT NULL,
+      value REAL NOT NULL,
+      is_agent INTEGER DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+  `);
+
+  // Agent tokens table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      token TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    );
+  `);
 }
 
 // 2. Custom Admin commands hook
@@ -77,13 +106,248 @@ function customAdminCommands(cmd: string, arg: string, print: (msg: string) => v
   }
 }
 
+// Global in-memory score tracking and agent sessions
+const playerScores = new Map<string, number>();
+const activeAgentSessions = new Map<string, { accountId: string; username: string; lastActionTime: number }>();
+
 // Start master TuiEngine
 const engine = new TuiEngine({
   databasePath: "data/demo.db",
   onDatabaseInit,
   customAdminCommands,
   tickRateMs: 200, // Fast ticks for smooth movement!
-  onPlayerSession: handlePlayerSession
+  onPlayerSession: handlePlayerSession,
+  customRoutes: {
+    "/agent-playground": (req) => {
+      const htmlPath = join(process.cwd(), "game", "agent_playground.html");
+      try {
+        const html = readFileSync(htmlPath, "utf-8");
+        return new Response(html, { headers: { "Content-Type": "text/html" } });
+      } catch (err) {
+        return new Response("Agent Playground file not found.", { status: 404 });
+      }
+    },
+    "/api/mcp/authenticate": async (req) => {
+      if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+      try {
+        const body = await req.json();
+        const token = body.token;
+        const db = getDB();
+        let tokenRow = db.query(
+          "SELECT t.account_id, a.username FROM agent_tokens t JOIN accounts a ON t.account_id = a.id WHERE t.token = $token"
+        ).get({ $token: token }) as { account_id: string; username: string } | null;
+
+        const HUB_API_URL = process.env.HUB_API_URL || "https://play.tuicraft.com";
+
+        // Verification fallback with central Hub
+        if (!tokenRow) {
+          try {
+            const verifyRes = await fetch(`${HUB_API_URL}/api/publish/tokens/verify`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token })
+            });
+            if (verifyRes.ok) {
+              const verifyData = await verifyRes.json() as { accountId: string; username: string };
+              if (verifyData && verifyData.accountId) {
+                const accountId = verifyData.accountId;
+                const username = verifyData.username;
+                
+                // Ensure account exists locally
+                const localAcc = db.query("SELECT id FROM accounts WHERE id = $id").get({ $id: accountId });
+                if (!localAcc) {
+                  db.query("INSERT INTO accounts (id, username, created_at) VALUES ($id, $u, $time)").run({
+                    $id: accountId,
+                    $u: username,
+                    $time: new Date().toISOString()
+                  });
+                }
+                
+                // Save locally
+                db.query("INSERT OR REPLACE INTO agent_tokens (token, account_id, created_at) VALUES ($t, $id, $time)").run({
+                  $t: token,
+                  $id: accountId,
+                  $time: new Date().toISOString()
+                });
+                
+                tokenRow = { account_id: accountId, username };
+              }
+            }
+          } catch (e) {
+            console.error("[Index Auth Hub Verify Error]", e);
+          }
+        }
+
+        if (!tokenRow) {
+          return new Response(JSON.stringify({ success: false, error: "Invalid agent token" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+
+        const sessionId = crypto.randomUUID();
+        activeAgentSessions.set(sessionId, {
+          accountId: tokenRow.account_id,
+          username: tokenRow.username,
+          lastActionTime: Date.now()
+        });
+
+        // Make agent active in arena
+        if (!activeAccounts.has(tokenRow.username)) {
+          let pos = db.query("SELECT x, y FROM game_players WHERE account_id = $id").get({ $id: tokenRow.account_id }) as { x: number; y: number } | null;
+          if (!pos) {
+            db.query("INSERT INTO game_players (account_id, x, y, theme) VALUES ($id, 5, 3, 'default')").run({ $id: tokenRow.account_id });
+            pos = { x: 5, y: 3 };
+          }
+          activeAccounts.set(tokenRow.username, {
+            accountId: tokenRow.account_id,
+            username: tokenRow.username,
+            x: pos.x,
+            y: pos.y,
+            isAgent: true
+          });
+          // Trigger redraws for visual players
+          for (const s of activeSessions.values()) {
+            s.onStateUpdate?.();
+          }
+        }
+
+        return new Response(JSON.stringify({ success: true, sessionId, username: tokenRow.username }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ success: false, error: err.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    },
+    "/api/mcp/state": async (req) => {
+      const url = new URL(req.url);
+      const sessionId = url.searchParams.get("sessionId");
+      if (!sessionId || !activeAgentSessions.has(sessionId)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const session = activeAgentSessions.get(sessionId)!;
+      const db = getDB();
+
+      const players = Array.from(activeAccounts.values()).map((p: any) => ({
+        username: p.username,
+        x: p.x,
+        y: p.y,
+        is_agent: !!p.isAgent
+      }));
+
+      const humanLeaderboard = getLocalLeaderboard("arena", "ticks_survived", false, 5);
+      const agentLeaderboard = getLocalLeaderboard("arena", "ticks_survived", true, 5);
+
+      return new Response(JSON.stringify({
+        gameTitle: "TuiCraft Movement Arena",
+        arenaWidth: MAP_W,
+        arenaHeight: MAP_H,
+        myPosition: activeAccounts.get(session.username) || null,
+        activePlayers: players,
+        recentChats: recentChats.slice(-15),
+        leaderboards: {
+          humans: humanLeaderboard,
+          agents: agentLeaderboard
+        }
+      }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    },
+    "/api/mcp/action": async (req) => {
+      if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+      try {
+        const body = await req.json();
+        const sessionId = body.sessionId;
+        const actionType = body.actionType;
+        const payload = body.payload;
+
+        if (!sessionId || !activeAgentSessions.has(sessionId)) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+
+        const session = activeAgentSessions.get(sessionId)!;
+        const now = Date.now();
+        if (now - session.lastActionTime < 180) {
+          return new Response(JSON.stringify({ success: false, error: "Rate limit exceeded" }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        session.lastActionTime = now;
+
+        // Enqueue action
+        engine.loopManager.queueAction(session.accountId, actionType, payload);
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ success: false, error: err.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    },
+    "/api/leaderboards": async (req) => {
+      const url = new URL(req.url);
+      const gameId = url.searchParams.get("game_id") || "arena";
+      const metric = url.searchParams.get("metric") || "ticks_survived";
+      const isAgent = url.searchParams.get("is_agent") === "true";
+      const limit = Number(url.searchParams.get("limit") || "5");
+
+      const rankings = getLocalLeaderboard(gameId, metric, isAgent, limit);
+      return new Response(JSON.stringify(rankings), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+});
+
+// Register MCP game tools
+registerMcpTools(engine);
+
+// Tick Handler for score updates and agent session cleaning
+engine.loopManager.registerTickHandler((tickCount) => {
+  // 1. Survived ticks activity tracking
+  for (const p of activeAccounts.values()) {
+    const currentScore = playerScores.get(p.accountId) || 0;
+    playerScores.set(p.accountId, currentScore + 1);
+  }
+
+  // 2. Cleanup idle agent sessions (timeout 25 seconds)
+  const now = Date.now();
+  for (const [sessionId, session] of activeAgentSessions.entries()) {
+    if (now - session.lastActionTime > 25000) {
+      console.log(`[MCP Agent] @${session.username} idle timeout, removing from active arena.`);
+      const score = playerScores.get(session.accountId) || 0;
+      if (score > 0) {
+        recordScore(session.accountId, session.username, "arena", "ticks_survived", score, true).catch(() => {});
+      }
+      playerScores.delete(session.accountId);
+      activeAccounts.delete(session.username);
+      activeAgentSessions.delete(sessionId);
+      
+      // Redraw other sessions
+      for (const s of activeSessions.values()) {
+        s.onStateUpdate?.();
+      }
+    }
+  }
+});
+
+// Periodic DB autosave for scores (every 100 ticks)
+engine.loopManager.registerAutosaveHandler(async () => {
+  for (const p of activeAccounts.values()) {
+    const score = playerScores.get(p.accountId) || 0;
+    if (score > 0) {
+      const isAgent = !!p.isAgent;
+      await recordScore(p.accountId, p.username, "arena", "ticks_survived", score, isAgent);
+    }
+  }
 });
 
 // Register generic movement action
@@ -228,8 +492,13 @@ function handlePlayerSession(session: any) {
   let chatLogBox: ChatLogComponent | null = null;
   let chatInputBox: ChatInputComponent | null = null;
 
-  let helpPopup: BoxRenderable | null = null;
-  let helpText: TextRenderable | null = null;
+  let helpPopup = null;
+  let helpText = null;
+
+  let leaderboardPopup: BoxRenderable | null = null;
+  let leaderboardText: TextRenderable | null = null;
+  let leaderboardPopupCallback: ((key: any) => void) | null = null;
+  let isGlobalView = false;
 
   let autocompleteState: {
     prefix: string;
@@ -370,11 +639,151 @@ function handlePlayerSession(session: any) {
     if (helpPopupCallback) {
       renderer.keyInput.off("keypress", helpPopupCallback);
     }
+    if (leaderboardPopupCallback) {
+      renderer.keyInput.off("keypress", leaderboardPopupCallback);
+    }
     renderer.removeAllListeners("show-help");
+    renderer.removeAllListeners("show-leaderboard");
     activeSessions.delete(sessionId);
     if (currentUsername) {
+      const score = playerScores.get(currentAccountId) || 0;
+      if (score > 0) {
+        recordScore(currentAccountId, currentUsername, "arena", "ticks_survived", score, false).catch(() => {});
+      }
+      playerScores.delete(currentAccountId);
       activeAccounts.delete(currentUsername);
       console.log(`Player @${currentUsername} logged out.`);
+    }
+  });
+
+  // Initialize Leaderboard Popup Overlay
+  leaderboardPopup = new BoxRenderable(ctx, {
+    position: "absolute",
+    width: 62,
+    height: 16,
+    top: 4,
+    left: Math.max(1, Math.floor((sessionObj.cols - 62) / 2)),
+    border: true,
+    borderColor: "#eab308", // Yellow border
+    backgroundColor: "#0b0f19",
+    title: " Leaderboards ",
+    titleColor: "#eab308",
+    titleAlignment: "center",
+    zIndex: 1000,
+    visible: false
+  });
+
+  leaderboardText = new TextRenderable(ctx, {
+    width: "100%",
+    height: "100%",
+    paddingLeft: 4,
+    paddingRight: 2,
+    paddingTop: 1
+  });
+  leaderboardPopup.add(leaderboardText);
+
+  // Register leaderboard show listener
+  renderer.on("show-leaderboard", () => {
+    if (leaderboardPopup && leaderboardText) {
+      if (leaderboardPopupCallback) {
+        renderer.keyInput.off("keypress", leaderboardPopupCallback);
+        leaderboardPopupCallback = null;
+      }
+
+      try { renderer.root.remove(leaderboardPopup); } catch (e) {}
+      renderer.root.add(leaderboardPopup);
+      leaderboardPopup.visible = true;
+      leaderboardText.scrollY = 0;
+
+      const renderPopupContent = async () => {
+        const title = isGlobalView ? "🏆 Global Rankings 🏆" : "📍 Local Rankings 📍";
+        
+        let humans: any[] = [];
+        let agents: any[] = [];
+
+        if (isGlobalView) {
+          humans = await getGlobalLeaderboard("arena", "ticks_survived", false, 5);
+          agents = await getGlobalLeaderboard("arena", "ticks_survived", true, 5);
+        } else {
+          humans = getLocalLeaderboard("arena", "ticks_survived", false, 5);
+          agents = getLocalLeaderboard("arena", "ticks_survived", true, 5);
+        }
+
+        const padUser = (name: string, len: number) => {
+          const visualWidth = getStringVisualWidth(name);
+          const diff = len - visualWidth;
+          return diff > 0 ? name + " ".repeat(diff) : name;
+        };
+
+        const renderRow = (rank: number, name: string, score: number, isAgent: boolean) => {
+          const nameStr = isAgent ? `🤖 ${name}` : `@${name}`;
+          const paddedName = padUser(nameStr, 18);
+          return `${rank}. ${paddedName} [${score.toString().padStart(4, " ")} pts]`;
+        };
+
+        const humanLines: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          const item = humans[i];
+          if (item) {
+            humanLines.push(renderRow(i + 1, item.username, item.value, false));
+          } else {
+            humanLines.push(`${i + 1}. ───────────────────────`);
+          }
+        }
+
+        const agentLines: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          const item = agents[i];
+          if (item) {
+            agentLines.push(renderRow(i + 1, item.username, item.value, true));
+          } else {
+            agentLines.push(`${i + 1}. ───────────────────────`);
+          }
+        }
+
+        const theme = getTheme(playerTheme, renderer.themeMode);
+        const { cyan: themeCyan, magenta: themeMagenta, green: themeGreen } = createThemeStyles(playerTheme, renderer.themeMode);
+
+        leaderboardText.content = t`
+  ${bold(themeCyan("=== " + title + " ==="))}
+  
+  ${bold(themeGreen("👤 Human Players"))}           ${bold(themeMagenta("🤖 AI Agents"))}
+  ───────────────────────   ───────────────────────
+  ${humanLines[0]!}   ${agentLines[0]!}
+  ${humanLines[1]!}   ${agentLines[1]!}
+  ${humanLines[2]!}   ${agentLines[2]!}
+  ${humanLines[3]!}   ${agentLines[3]!}
+  ${humanLines[4]!}   ${agentLines[4]!}
+  ───────────────────────   ───────────────────────
+
+  ${dim("[Tab: Toggle Local/Global | Any other key to close]")}
+        `;
+        renderer.requestRender();
+      };
+
+      renderPopupContent();
+
+      leaderboardPopupCallback = (key: any) => {
+        key.preventDefault();
+
+        if (key.name === "tab") {
+          isGlobalView = !isGlobalView;
+          renderPopupContent();
+          return;
+        }
+
+        if (leaderboardPopup) {
+          leaderboardPopup.visible = false;
+          try { renderer.root.remove(leaderboardPopup); } catch (e) {}
+        }
+        if (leaderboardPopupCallback) {
+          renderer.keyInput.off("keypress", leaderboardPopupCallback);
+          leaderboardPopupCallback = null;
+        }
+        renderer.requestRender();
+      };
+
+      renderer.keyInput.on("keypress", leaderboardPopupCallback);
     }
   });
 
@@ -385,6 +794,9 @@ function handlePlayerSession(session: any) {
     // Reposition help popup
     if (helpPopup) {
       helpPopup.left = Math.max(1, Math.floor((sessionObj.cols - 60) / 2));
+    }
+    if (leaderboardPopup) {
+      leaderboardPopup.left = Math.max(1, Math.floor((sessionObj.cols - 60) / 2));
     }
 
     if (!ok) {
@@ -602,6 +1014,8 @@ function handlePlayerSession(session: any) {
           drawGameScreen();
         } else if (cmd === "help") {
           renderer.emit("show-help");
+        } else if (cmd === "leaderboards" || cmd === "leaderboard" || cmd === "top") {
+          renderer.emit("show-leaderboard");
         } else if (cmd === "w" || cmd === "whisper") {
           const rawTarget = parts[1] || "";
           const msgText = parts.slice(2).join(" ").trim();
@@ -807,6 +1221,12 @@ function handlePlayerSession(session: any) {
         return;
       }
 
+      if (key.name === "l" && !inputFocused) {
+        key.preventDefault();
+        renderer.emit("show-leaderboard");
+        return;
+      }
+
       if (key.name === "escape") {
         chatInputBox?.blurInput();
         session.write("\x1b[?25l"); // Hide cursor during movement
@@ -844,7 +1264,11 @@ function handlePlayerSession(session: any) {
     // Place all active player positions on grid
     for (const p of activeAccounts.values()) {
       if (p.x >= 0 && p.x < MAP_W && p.y >= 0 && p.y < MAP_H) {
-        grid[p.y]![p.x] = p.username === currentUsername ? "@" : "P";
+        if (p.username === currentUsername) {
+          grid[p.y]![p.x] = "@";
+        } else {
+          grid[p.y]![p.x] = (p as any).isAgent ? "A" : "P";
+        }
       }
     }
 
@@ -854,6 +1278,7 @@ function handlePlayerSession(session: any) {
     const theme = getTheme(playerTheme, renderer.themeMode);
     const GREEN_COLOR = RGBA.fromHex(theme.green);
     const CYAN_COLOR = RGBA.fromHex(theme.cyan);
+    const MAGENTA_COLOR = RGBA.fromHex(theme.magenta);
     const DIM_COLOR = RGBA.fromHex(theme.defaultFg);
     const DEFAULT_BG = RGBA.defaultBackground();
 
@@ -865,6 +1290,8 @@ function handlePlayerSession(session: any) {
           fb.setCell(xPos, y, "@", GREEN_COLOR, DEFAULT_BG);
         } else if (char === "P") {
           fb.setCell(xPos, y, "P", CYAN_COLOR, DEFAULT_BG);
+        } else if (char === "A") {
+          fb.setCell(xPos, y, "A", MAGENTA_COLOR, DEFAULT_BG);
         } else {
           fb.setCell(xPos, y, ".", DIM_COLOR, DEFAULT_BG);
         }
@@ -885,6 +1312,7 @@ ${themeYellow("Movement Tips:")}
 Use ${bold("W/A/S/D")} to move
 Press ${bold("/")} to chat
 Press ${bold("ESC")} to steer
+Press ${bold("L")} for rankings
 Type ${bold("/logout")} to exit
 `;
     sidebarText.content = statsChunks;

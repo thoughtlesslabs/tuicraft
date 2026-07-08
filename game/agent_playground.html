@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TuiCraft - Web Agent Playground</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <style>
+    :root {
+      --bg: #090e1a;
+      --panel: rgba(15, 23, 42, 0.65);
+      --border: rgba(56, 189, 248, 0.25);
+      --border-hover: rgba(56, 189, 248, 0.5);
+      --primary: #38bdf8;
+      --accent: #ec4899;
+      --success: #22c55e;
+      --warning: #eab308;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+    body {
+      background-color: #0b0f19;
+      background-image: radial-gradient(circle at top right, rgba(56, 189, 248, 0.08), transparent 450px),
+                        radial-gradient(circle at bottom left, rgba(236, 72, 153, 0.05), transparent 400px);
+      margin: 0;
+      padding: 0;
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      width: 100%;
+      padding: 15px 40px;
+      box-sizing: border-box;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+      background: rgba(11, 15, 25, 0.8);
+      z-index: 10;
+    }
+    .logo-container {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--primary);
+      font-size: 1.6rem;
+      font-weight: 700;
+      text-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+      letter-spacing: -1px;
+    }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .nav-links a:hover {
+      color: var(--primary);
+      background: var(--panel);
+      border-color: var(--border);
+    }
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 350px 1fr;
+      gap: 20px;
+      padding: 20px;
+      box-sizing: border-box;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+      height: calc(100vh - 80px);
+      overflow: hidden;
+    }
+    .sidebar {
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      overflow-y: auto;
+    }
+    .main-content {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      height: 100%;
+    }
+    .terminal-section {
+      flex: 1;
+      background: #000;
+      border: 2px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 0 30px rgba(56, 189, 248, 0.1);
+      position: relative;
+    }
+    .log-section {
+      height: 200px;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .log-entry {
+      line-height: 1.4;
+    }
+    .log-info { color: var(--primary); }
+    .log-success { color: var(--success); }
+    .log-warn { color: var(--warning); }
+    .log-error { color: var(--accent); }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    input, select, textarea {
+      background: rgba(8, 9, 12, 0.8);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #fff;
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+    }
+    button {
+      background: linear-gradient(135deg, var(--primary), #00f2fe);
+      color: #090e1a;
+      font-weight: 700;
+      border: none;
+      border-radius: 6px;
+      padding: 12px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+    }
+    button:hover {
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+      transform: translateY(-1px);
+    }
+    button.stop {
+      background: linear-gradient(135deg, var(--accent), #ff007f);
+      color: #fff;
+    }
+    .badge-status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-left: 6px;
+    }
+    .badge-idle { background: rgba(148, 163, 184, 0.2); color: var(--text-muted); }
+    .badge-running { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo-container">TUICRAFT AGENT LABS</div>
+    <div class="nav-links">
+      <a href="/">Terminal</a>
+      <a href="/guide">Guide</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Left Configuration Panel -->
+    <div class="sidebar">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; color: var(--primary);">Agent Controller</h3>
+        <span id="agent-status-badge" class="badge-status badge-idle">Idle</span>
+      </div>
+
+      <div class="form-group">
+        <label for="agent-token">Agent Access Token</label>
+        <input type="password" id="agent-token" placeholder="Enter Agent Access Token" />
+      </div>
+
+      <div class="form-group">
+        <label for="gemini-key">Gemini API Key</label>
+        <input type="password" id="gemini-key" placeholder="AI key (saved locally)" />
+      </div>
+
+      <div class="form-group">
+        <label for="gemini-model">LLM Model</label>
+        <select id="gemini-model">
+          <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast)</option>
+          <option value="gemini-1.5-pro">Gemini 1.5 Pro (Capable)</option>
+          <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash</option>
+        </select>
+      </div>
+
+      <div class="form-group" style="flex: 1; display: flex; flex-direction: column;">
+        <label for="system-instructions">System Instructions (Prompt)</label>
+        <textarea id="system-instructions" style="flex: 1; min-height: 180px; resize: none; font-size: 0.85rem; font-family: monospace;">You are an AI player inside the TuiCraft Movement Arena game.
+Your goal is to survive, move around, explore the arena map, and chat with other players.
+
+Every turn, you will receive the game state in JSON format.
+Analyze the positions of other players, wall coordinates, and chat messages.
+
+Determine your next action. You can output one of the following JSON formats:
+1. Move: {"action": "move", "dx": -1|0|1, "dy": -1|0|1}
+2. Chat: {"action": "chat", "text": "your message here"}
+
+Avoid hitting boundaries or getting stuck.
+Output ONLY the clean raw JSON block, no markdown formatting.</textarea>
+      </div>
+
+      <button id="btn-toggle-agent">Launch Agent</button>
+    </div>
+
+    <!-- Right Grid Area -->
+    <div class="main-content">
+      <!-- Live Game Screen -->
+      <div class="terminal-section" id="terminal-container"></div>
+      
+      <!-- Live LLM Logs -->
+      <div class="log-section" id="log-container">
+        <div class="log-entry log-info">[Agent Sandbox] Ready to launch. Please enter your Agent Token and Gemini API Key to begin.</div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const term = new Terminal({
+      cursorBlink: true,
+      fontFamily: '"FiraCode Nerd Font", "Courier New", Courier, monospace',
+      fontSize: 16,
+      theme: {
+        background: '#000000',
+        foreground: '#cbd5e1',
+        cursor: '#38bdf8'
+      }
+    });
+
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('terminal-container'));
+    fitAddon.fit();
+
+    // Load credentials from localStorage
+    document.getElementById("agent-token").value = localStorage.getItem("agent_token") || "";
+    document.getElementById("gemini-key").value = localStorage.getItem("gemini_api_key") || "";
+
+    let ws = null;
+    let agentInterval = null;
+    let isAgentRunning = false;
+    let mcpSessionId = null;
+
+    function addLog(type, message) {
+      const logContainer = document.getElementById("log-container");
+      const entry = document.createElement("div");
+      entry.className = `log-entry log-${type}`;
+      entry.innerText = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // Connect visual game terminal
+    function connectTerminal() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + window.location.host + '/ws';
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        const token = localStorage.getItem("game_session_token");
+        if (token) {
+          ws.send(JSON.stringify(["resume", token, term.cols, term.rows]));
+        } else {
+          ws.send(JSON.stringify(["resize", term.cols, term.rows]));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof Blob) {
+          event.data.arrayBuffer().then(buf => {
+            term.write(new Uint8Array(buf));
+          });
+        } else {
+          term.write(event.data);
+        }
+      };
+    }
+
+    connectTerminal();
+
+    // Toggle Agent Execution Loop
+    document.getElementById("btn-toggle-agent").addEventListener("click", async () => {
+      if (isAgentRunning) {
+        stopAgent();
+      } else {
+        await startAgent();
+      }
+    });
+
+    async function startAgent() {
+      const agentToken = document.getElementById("agent-token").value.trim();
+      const geminiKey = document.getElementById("gemini-key").value.trim();
+      const model = document.getElementById("gemini-model").value;
+      const systemPrompt = document.getElementById("system-instructions").value.trim();
+
+      if (!agentToken || !geminiKey) {
+        addLog("error", "Agent Token and Gemini API Key are required!");
+        return;
+      }
+
+      // Save to localStorage
+      localStorage.setItem("agent_token", agentToken);
+      localStorage.setItem("gemini_api_key", geminiKey);
+
+      addLog("info", "Starting Agent... Handshaking with local TuiCraft Server...");
+
+      // 1. Fetch MCP details via local HTTP fetch
+      try {
+        const gameResponse = await fetch('/api/mcp/authenticate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: agentToken })
+        });
+        const mcpAuth = await gameResponse.json();
+        if (!gameResponse.ok || !mcpAuth.success) {
+          addLog("error", "Authentication failed: " + (mcpAuth.error || "Invalid Token"));
+          return;
+        }
+
+        mcpSessionId = mcpAuth.sessionId;
+        addLog("success", `Authenticated as @${mcpAuth.username}!`);
+      } catch (err) {
+        addLog("error", `Server connection error: ${err.message}`);
+        return;
+      }
+
+      isAgentRunning = true;
+      document.getElementById("agent-status-badge").className = "badge-status badge-running";
+      document.getElementById("agent-status-badge").innerText = "Running";
+      document.getElementById("btn-toggle-agent").innerText = "Stop Agent";
+      document.getElementById("btn-toggle-agent").className = "stop";
+
+      // 2. Start Decision Loop (every 1.5 seconds)
+      agentInterval = setInterval(async () => {
+        try {
+          // Fetch game state
+          const stateRes = await fetch(`/api/mcp/state?sessionId=${mcpSessionId}`);
+          if (!stateRes.ok) throw new Error("Could not fetch game state.");
+          const gameState = await stateRes.json();
+
+          // Prepare prompt for Gemini
+          const prompt = `System Instructions:\n${systemPrompt}\n\nCurrent Game State:\n${JSON.stringify(gameState, null, 2)}\n\nOutput next action JSON:`;
+
+          // Call Gemini API directly from browser
+          const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: "application/json" }
+            })
+          });
+
+          if (!geminiRes.ok) {
+            const errDetails = await geminiRes.json();
+            throw new Error(errDetails.error?.message || "Gemini API error.");
+          }
+
+          const geminiData = await geminiRes.json();
+          const responseText = geminiData.candidates[0].content.parts[0].text.trim();
+          addLog("info", `LLM Decision: ${responseText}`);
+
+          // Parse action
+          const decision = JSON.parse(responseText);
+          let actionType = null;
+          let payload = {};
+
+          if (decision.action === "move") {
+            actionType = "move";
+            payload = { dx: Number(decision.dx || 0), dy: Number(decision.dy || 0) };
+          } else if (decision.action === "chat") {
+            actionType = "chat";
+            payload = { text: decision.text };
+          }
+
+          if (actionType) {
+            // Push action back to TuiCraft
+            const actRes = await fetch('/api/mcp/action', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId: mcpSessionId,
+                actionType,
+                payload
+              })
+            });
+            const actData = await actRes.json();
+            if (!actData.success) {
+              addLog("warn", `Action rejected: ${actData.error}`);
+            }
+          }
+        } catch (err) {
+          addLog("error", `Loop error: ${err.message}`);
+        }
+      }, 1500);
+    }
+
+    function stopAgent() {
+      if (agentInterval) {
+        clearInterval(agentInterval);
+        agentInterval = null;
+      }
+      isAgentRunning = false;
+      document.getElementById("agent-status-badge").className = "badge-status badge-idle";
+      document.getElementById("agent-status-badge").innerText = "Idle";
+      document.getElementById("btn-toggle-agent").innerText = "Launch Agent";
+      document.getElementById("btn-toggle-agent").className = "";
+      addLog("info", "Agent Stopped.");
+    }
+  </script>
+</body>
+</html>

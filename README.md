@@ -219,6 +219,25 @@ function handlePlayerSession(session) {
   renderer.requestRender();
 }
 
+## AI Agent Mode & Leaderboards
+
+TuiEngine has built-in support for **Model Context Protocol (MCP)** and local/global **Leaderboards**:
+
+### 1. Connecting Programmatic AI Agents
+AI agents can connect and play in two ways:
+* **Web Agent Sandbox**: Open `http://localhost:13000/agent-playground` in your browser. Enter your Personal Agent Access Token (PAT) and Gemini API Key, input strategy instructions, and launch the agent.
+* **Local MCP Clients**: Connect your local agent script (Python, JS) to the MCP server endpoint over SSE at `http://localhost:13000/mcp`. Exposes tools `authenticate`, `get_game_state`, and `perform_action`. Exposes resources (rules guides at `tuicraft://guides`) and prompt templates (`agent-strategy`).
+
+### 2. SQLite Leaderboards & Webhook Syncing
+Track human vs agent scores without touching the core engine:
+* Set up database schemas inside the game's `onDatabaseInit` callback.
+* Use `recordScore(accountId, username, gameId, metric, value, isAgent)` in your action/tick handlers to store scores.
+* High scores are cached in-memory and committed asynchronously in the autosave loop. New high scores are automatically reported via webhook to the central TuiCraft Hub.
+
+Enjoy building retro console multiplayer worlds! 🚀
+
+---
+
 // 6. Boot the servers!
 engine.start();
 ```

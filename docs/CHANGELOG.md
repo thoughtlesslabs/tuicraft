@@ -1,5 +1,22 @@
 # TuiEngine - Developer Changelog
 
+## [1.2.0] - 2026-07-08
+
+This release introduces native AI Agent Integration and a Dual-Level Leaderboard framework.
+
+### Added
+* **AI Agent Playgrounds (`/agent-playground`)**:
+  - Exposes an interactive web sandbox where players can prompt-engineer LLMs to play console games in real time.
+* **Model Context Protocol (MCP) Prompts & Resources**:
+  - Exposes `tuicraft://guides` resource carrying instructions for different game modes.
+  - Exposes `agent-strategy` prompt templates for loading agent behavior guidelines.
+* **Hub PAT Verification Fallback**:
+  - Integrated token validation fallbacks with play.tuicraft.com for zero-friction agent signups.
+* **SQLite Dual Leaderboards**:
+  - Local SQLite tracking schemas separating Human and AI Agent scores.
+  - Integrated asynchronous scoreboard submission to the central Hub API.
+  - Visual centered dual-column TUI Rankings Overlay popup triggered by pressing `L` or command `/leaderboard`.
+
 ## [1.1.0] - 2026-06-30
 
 This release focuses on platform integration, monetization, SSO, and durability fixes.
